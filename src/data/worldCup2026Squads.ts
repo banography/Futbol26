@@ -58,6 +58,12 @@ export function getSquad(fifaCode: string): Squad | null {
   return adaptSquad(_getSquad(fifaCode.toUpperCase()));
 }
 
+export function getAllTeams(): { teamCode: string; teamName: string }[] {
+  return _SQUADS
+    .map(s => ({ teamCode: s.teamCode, teamName: s.teamName }))
+    .sort((a, b) => a.teamName.localeCompare(b.teamName));
+}
+
 export const SQUADS: Record<string, Squad> = Object.fromEntries(
   _SQUADS
     .map((s) => adaptSquad(_getSquad(s.teamCode))!)

@@ -7,23 +7,24 @@ export const PALETTE = [
 export type PaletteColor = (typeof PALETTE)[number];
 
 export const colors = {
-  background:       '#040C14',
-  card:             '#091622',
-  cardBorder:       '#152536',
-  accent:           '#B4F01E',
-  accentCyan:       '#3CF0B4',
-  accentPurple:     '#9678F0',
-  textPrimary:      '#FFFFFF',
-  textSecondary:    '#7A8FA6',
-  textMuted:        '#384E62',
-  groupPillBg:      '#132030',
-  groupPillText:    '#3CF0B4',
-  liveRed:          '#F01E00',
-  divider:          '#152536',
-  tabActiveLine:    '#B4F01E',
-  tabActiveText:    '#B4F01E',
-  tabInactiveText:  '#384E62',
-  headerBg:         '#020A10',
-  watchPillBg:      '#132030',
-  watchPillText:    '#9678F0',
+  background:      '#F9F7F5',   // warm off-white
+  card:            '#FFFFFF',
+  cardBorder:      '#E6E1DB',   // warm stone border
+  accent:          '#2D6A49',   // deep forest green (replaces harsh olive)
+  accentCyan:      '#1C7E60',
+  accentPurple:    '#5B45C0',
+  textPrimary:     '#171412',   // warm near-black
+  textSecondary:   '#5A6474',   // muted slate
+  textNavy:        '#1E3A5C',   // deep navy — venue lines, date headers
+  textMuted:       '#9BA4AF',
+  groupPillBg:     '#E5EDE7',   // soft sage (replaces minty)
+  groupPillText:   '#2D6A49',   // matches accent
+  liveRed:         '#C0392B',   // warmer red
+  divider:         '#EDE9E4',   // soft warm divider
+  tabActiveLine:   '#2D6A49',
+  tabActiveText:   '#2D6A49',
+  tabInactiveText: '#9BA4AF',
+  headerBg:        '#FFFFFF',
+  watchPillBg:     '#EEF0F8',   // neutral blue-gray
+  watchPillText:   '#4A5680',   // slate blue
 } as const;

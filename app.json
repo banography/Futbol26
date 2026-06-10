@@ -1,21 +1,26 @@
 {
   "expo": {
-    "name": "FutbolApp",
-    "slug": "FutbolApp",
+    "name": "Futbol26",
+    "slug": "futbol26",
     "scheme": "futbol26",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#0f0f1e"
+    },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.bani.futbol26"
     },
     "android": {
+      "package": "com.bani.futbol26",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0f0f1e"
       },
       "predictiveBackGestureEnabled": false
     },

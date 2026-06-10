@@ -8,20 +8,20 @@ import { formatMatchTime } from '../src/utils/formatMatchTime';
 
 const API_BASE = process.env['EXPO_PUBLIC_API_URL'];
 
-// ── flagcdn.com needs ISO 3166-1 alpha-2 codes; FIFA uses alpha-3. ──────────
+// ── flagcdn.com needs ISO 3166-1 alpha-2 (or subdivision) codes; FIFA uses alpha-3. ─
 const FIFA_TO_CDN: Record<string, string> = {
-  MEX: 'mx',
-  RSA: 'za',
-  KOR: 'kr',
-  CZE: 'cz',
-  CAN: 'ca',
-  BIH: 'ba',
-  USA: 'us',
-  PAR: 'py',
-  ARG: 'ar',
+  ALG: 'dz', ARG: 'ar', AUS: 'au', AUT: 'at', BEL: 'be',
+  BIH: 'ba', BRA: 'br', CAN: 'ca', CIV: 'ci', COD: 'cd',
+  COL: 'co', CPV: 'cv', CRO: 'hr', CUW: 'cw', CZE: 'cz',
+  ECU: 'ec', EGY: 'eg', ENG: 'gb-eng', ESP: 'es', FRA: 'fr',
+  GER: 'de', GHA: 'gh', HAI: 'ht', IRN: 'ir', IRQ: 'iq',
+  JOR: 'jo', JPN: 'jp', KOR: 'kr', KSA: 'sa', MAR: 'ma',
+  MEX: 'mx', NED: 'nl', NOR: 'no', NZL: 'nz', PAN: 'pa',
+  PAR: 'py', POR: 'pt', QAT: 'qa', RSA: 'za', SCO: 'gb-sct',
+  SEN: 'sn', SUI: 'ch', SWE: 'se', TUN: 'tn', TUR: 'tr',
+  URU: 'uy', USA: 'us', UZB: 'uz',
+  // Non-WC26 teams occasionally appearing in match data
   ALB: 'al',
-  ESP: 'es',
-  BRA: 'br',
 };
 
 function adaptTeam(team: WC26Team): AppMatch['teamA'] {

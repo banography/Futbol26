@@ -1,37 +1,48 @@
 import { useState } from 'react';
-import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
-import { PlayerSilhouette } from './PlayerSilhouette';
+import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
+import { PlayerJerseyAvatar } from './PlayerJerseyAvatar';
 import type { Player, PositionCode } from '../src/data/worldCup2026Squads';
 import { colors } from '../constants/colors';
 
 const POSITION_LABEL: Record<PositionCode, string> = {
-  GK: 'Goalkeeper',
-  DF: 'Defender',
-  MF: 'Midfielder',
   FW: 'Forward',
+  MF: 'Midfielder',
+  DF: 'Defender',
+  GK: 'Goalkeeper',
 };
 
 interface PlayerCardProps {
   player: Player;
+  teamFlag: string;
 }
 
-export function ProjectedPlayerCard({ player }: PlayerCardProps) {
+export function ProjectedPlayerCard({ player, teamFlag }: PlayerCardProps) {
+  const router = useRouter();
   const [photoFailed, setPhotoFailed] = useState(false);
   const showSilhouette = !player.photoUrl || photoFailed;
+  const teamCode = player.id.split('-')[0]?.toUpperCase() ?? '';
+
+  function handlePress() {
+    router.push({
+      pathname: '/player/[playerId]',
+      params: { playerId: player.id, flag: teamFlag },
+    });
+  }
 
   return (
     <>
-      <Pressable
+      <TouchableOpacity
         style={styles.card}
-        // TODO: open player detail modal with full player info
-        onPress={() => {
-          console.log(`[Futbol26] Player tapped: ${player.fullName} #${player.jerseyNumber}`, player);
-        }}
+        activeOpacity={0.55}
+        onPress={handlePress}
+        accessibilityLabel={`View ${player.fullName} profile`}
+        accessibilityRole="button"
       >
         {/* Left — photo or silhouette, bottom-aligned */}
         <View style={styles.photoContainer}>
           {showSilhouette ? (
-            <PlayerSilhouette width={52} height={72} />
+            <PlayerJerseyAvatar teamCode={teamCode} jerseyNumber={player.jerseyNumber} width={52} height={58} />
           ) : (
             <Image
               source={{ uri: player.photoUrl }}
@@ -48,9 +59,9 @@ export function ProjectedPlayerCard({ player }: PlayerCardProps) {
           <Text style={styles.number}>#{player.jerseyNumber}</Text>
           <Text style={styles.position}>{POSITION_LABEL[player.position]}</Text>
         </View>
-      </Pressable>
+      </TouchableOpacity>
 
-      {/* Thin separator — rendered outside the Pressable so it spans full width */}
+      {/* Thin separator — rendered outside the touch target so it spans full width */}
       <View style={styles.separator} />
     </>
   );

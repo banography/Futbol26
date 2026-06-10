@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   View,
   StyleSheet,
-  Text,
   SafeAreaView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -10,6 +9,8 @@ import { AppHeader } from '../components/AppHeader';
 import { TopTabs, TabId } from '../components/TopTabs';
 import { MatchesScreen } from './MatchesScreen';
 import { TournamentScreen } from './TournamentScreen';
+import { PlayersScreen } from './PlayersScreen';
+import { MyBracketScreen } from './MyBracketScreen';
 import { Match } from '../types/match';
 import { colors } from '../constants/colors';
 
@@ -39,15 +40,11 @@ export function HomeScreen() {
         )}
 
         {activeTab === 'players' && (
-          <View style={styles.centerBox}>
-            <Text style={styles.placeholderText}>Player rosters coming soon</Text>
-          </View>
+          <PlayersScreen />
         )}
 
         {activeTab === 'my-bracket' && (
-          <View style={styles.centerBox}>
-            <Text style={styles.placeholderText}>Your bracket predictions coming soon.</Text>
-          </View>
+          <MyBracketScreen />
         )}
       </View>
     </SafeAreaView>
@@ -64,17 +61,5 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.background,
-  },
-  centerBox: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 32,
-  },
-  placeholderText: {
-    fontSize: 15,
-    color: colors.textMuted,
-    letterSpacing: 0.5,
-    textAlign: 'center',
   },
 });

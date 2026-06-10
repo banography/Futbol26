@@ -9,8 +9,6 @@ interface MatchCardProps {
 }
 
 export function MatchCard({ match, onPress }: MatchCardProps) {
-  const hasWatch = match.watchOptions.length > 0;
-
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
@@ -34,14 +32,14 @@ export function MatchCard({ match, onPress }: MatchCardProps) {
       {/* Teams */}
       <View style={styles.teamsRow}>
         <View style={styles.teamBlock}>
-          <TeamFlagImage flagUrl={match.teamA.flagUrl} />
+          <TeamFlagImage flagUrl={match.teamA.flagUrl} width={80} height={50} />
           <Text style={styles.teamName}>{match.teamA.name.toUpperCase()}</Text>
         </View>
 
         <Text style={styles.vs}>VS</Text>
 
         <View style={styles.teamBlock}>
-          <TeamFlagImage flagUrl={match.teamB.flagUrl} />
+          <TeamFlagImage flagUrl={match.teamB.flagUrl} width={80} height={50} />
           <Text style={styles.teamName}>{match.teamB.name.toUpperCase()}</Text>
         </View>
       </View>
@@ -59,22 +57,6 @@ export function MatchCard({ match, onPress }: MatchCardProps) {
           )}
         </View>
       )}
-
-      {/* Divider */}
-      <View style={styles.divider} />
-
-      {/* Broadcast info */}
-      {hasWatch ? (
-        <View style={styles.watchRow}>
-          {match.watchOptions.map((opt, i) => (
-            <View key={i} style={styles.watchPill}>
-              <Text style={styles.watchPillText}>{opt.network}</Text>
-            </View>
-          ))}
-        </View>
-      ) : (
-        <Text style={styles.broadcastText}>Broadcast info not confirmed yet</Text>
-      )}
     </Pressable>
   );
 }
@@ -90,9 +72,9 @@ const styles = StyleSheet.create({
     padding: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
+    shadowOpacity: 0.18,
     shadowRadius: 8,
-    elevation: 6,
+    elevation: 3,
   },
   cardPressed: {
     opacity: 0.75,
@@ -104,7 +86,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   time: {
-    fontSize: 13,
+    fontSize: 15,
     fontWeight: '700',
     color: colors.accent,
     letterSpacing: 0.5,
@@ -124,33 +106,35 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
   },
   venue: {
-    fontSize: 11,
-    color: colors.textMuted,
-    marginBottom: 16,
-    letterSpacing: 0.3,
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textNavy,
+    marginBottom: 24,
+    letterSpacing: 0.2,
   },
   teamsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    marginBottom: 6,
   },
   teamBlock: {
     flex: 1,
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
   },
   teamName: {
-    fontSize: 10,
+    fontSize: 13,
     fontWeight: '800',
     color: colors.textPrimary,
-    letterSpacing: 2,
+    letterSpacing: 1.5,
     textAlign: 'center',
+    lineHeight: 18,
   },
   vs: {
-    fontSize: 14,
+    fontSize: 17,
     fontWeight: '900',
-    color: colors.accent,
+    color: colors.textMuted,
     letterSpacing: 3,
     paddingHorizontal: 8,
   },
@@ -178,32 +162,5 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#FFFFFF',
     letterSpacing: 1.5,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.divider,
-    marginBottom: 10,
-  },
-  broadcastText: {
-    fontSize: 11,
-    color: colors.textMuted,
-    letterSpacing: 0.3,
-  },
-  watchRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  watchPill: {
-    backgroundColor: colors.watchPillBg,
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  watchPillText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: colors.watchPillText,
-    letterSpacing: 0.5,
   },
 });

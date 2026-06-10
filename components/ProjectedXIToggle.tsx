@@ -6,14 +6,15 @@ import type { PositionCode } from '../src/data/worldCup2026Squads';
 import type { Match } from '../types/match';
 import { colors } from '../constants/colors';
 
-const POSITION_ORDER: PositionCode[] = ['GK', 'DF', 'MF', 'FW'];
+// const POSITION_ORDER: PositionCode[] = ['GK', 'DF', 'MF', 'FW'];
+const POSITION_ORDER: PositionCode[] = ['FW', 'MF', 'DF', 'GK'];
 
 
 const GROUP_LABEL: Record<PositionCode, string> = {
-  GK: 'GOALKEEPERS',
-  DF: 'DEFENDERS',
-  MF: 'MIDFIELDERS',
-  FW: 'FORWARDS',
+  FW: 'FORWARD',
+  MF: 'MIDFIELDER',
+  DF: 'DEFENDER',
+  GK: 'GOALKEEPER',
 };
 
 interface ProjectedXIToggleProps {
@@ -24,9 +25,8 @@ export function ProjectedXIToggle({ match }: ProjectedXIToggleProps) {
   const [selectedSide, setSelectedSide] = useState<'teamA' | 'teamB'>('teamA');
 
   // team IDs are lowercase FIFA codes (e.g. "mex"), squads are keyed uppercase
-  const selectedTeamId =
-    selectedSide === 'teamA' ? match.teamA.id : match.teamB.id;
-  const squad = getSquad(selectedTeamId);
+  const selectedTeam = selectedSide === 'teamA' ? match.teamA : match.teamB;
+  const squad = getSquad(selectedTeam.id);
 
   return (
     <View style={styles.container}>
@@ -64,10 +64,13 @@ export function ProjectedXIToggle({ match }: ProjectedXIToggleProps) {
         </View>
       ) : (
         <View>
-          {/* Head coach row */}
+          {/* Head coach */}
           {squad.headCoach ? (
-            <View style={styles.coachRow}>
-              <Text style={styles.coachLabel}>HEAD COACH</Text>
+            <View>
+              <View style={styles.groupHeader}>
+                <Text style={styles.groupTitle}>HEAD COACH</Text>
+                <View style={styles.headerLine} />
+              </View>
               <View style={styles.coachInfo}>
                 <Text style={styles.coachName}>{squad.headCoach}</Text>
                 {squad.headCoachNationality ? (
@@ -76,17 +79,22 @@ export function ProjectedXIToggle({ match }: ProjectedXIToggleProps) {
               </View>
             </View>
           ) : null}
-          <View style={styles.coachSeparator} />
 
           {POSITION_ORDER.map((pos) => {
             const group = squad.players.filter((p) => p.position === pos);
             if (group.length === 0) return null;
             return (
               <View key={pos}>
-                {/* Position group label */}
-                <Text style={styles.positionLabel}>{GROUP_LABEL[pos]}</Text>
+                <View style={styles.groupHeader}>
+                  <Text style={styles.groupTitle}>{GROUP_LABEL[pos]}</Text>
+                  <View style={styles.headerLine} />
+                </View>
                 {group.map((player) => (
-                  <ProjectedPlayerCard key={player.id} player={player} />
+                  <ProjectedPlayerCard
+                    key={player.id}
+                    player={player}
+                    teamFlag={selectedTeam.flagEmoji}
+                  />
                 ))}
               </View>
             );
@@ -152,22 +160,23 @@ const styles = StyleSheet.create({
   toggleTextActive: {
     color: colors.accent,
   },
-  coachRow: {
+  groupHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 14,
-    gap: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+    gap: 12,
   },
-  coachLabel: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: colors.textMuted,
+  groupTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.textSecondary,
     letterSpacing: 2,
-    width: 80,
   },
   coachInfo: {
-    flex: 1,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
   },
   coachName: {
     fontSize: 15,
@@ -181,20 +190,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     letterSpacing: 0.3,
     marginTop: 2,
-  },
-  coachSeparator: {
-    height: 1,
-    backgroundColor: colors.divider,
-    marginHorizontal: 16,
-  },
-  positionLabel: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: colors.textMuted,
-    letterSpacing: 2,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 6,
   },
   emptyState: {
     paddingVertical: 36,

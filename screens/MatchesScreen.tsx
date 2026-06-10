@@ -1,25 +1,324 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import {
   View,
   Text,
-  Modal,
   ScrollView,
   Pressable,
-  ActivityIndicator,
+  Modal,
   StyleSheet,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { WC26_MATCHES } from '../src/data/worldCup2026Matches';
 import type { Match as WC26Match } from '../src/data/worldCup2026Matches';
 import { formatMatchTime, formatMatchDate } from '../src/utils/formatMatchTime';
-import { TIMEZONES } from '../src/utils/timezones';
 import { DateSection } from '../components/DateSection';
 import { getFlagUrl } from '../services/futbolApi';
 import type { Match as AppMatch, DateGroup } from '../types/match';
 import { colors } from '../constants/colors';
 
-const TZ_KEY = '@futbol26/selectedTimezone';
+// ── Watch sheet data ──────────────────────────────────────────────────────────
+
+type Provider = {
+  name: string;
+  language: string;
+  priceText: string;
+  note: string;
+};
+
+type WatchRegion = {
+  flag: string;
+  region: string;
+  providers: Provider[];
+};
+
+const WATCH_DATA: WatchRegion[] = [
+  {
+    flag: '🇺🇸',
+    region: 'USA',
+    providers: [
+      { name: 'FOX',            language: 'English', priceText: 'Free*',        note: 'Free with antenna where available · FOX One from $19.99/mo' },
+      { name: 'Telemundo',      language: 'Spanish', priceText: 'Free*',        note: 'Free with antenna where available · Peacock from $10.99/mo' },
+      { name: 'FS1 / FS2',      language: 'English', priceText: 'From $19.99/mo', note: 'FOX One from $19.99/mo · or TV provider' },
+      { name: 'Universo',       language: 'Spanish', priceText: 'From $10.99/mo', note: 'Peacock from $10.99/mo · or TV provider' },
+      { name: 'Peacock',        language: 'English', priceText: 'From $10.99/mo', note: 'From $10.99/mo' },
+      { name: 'ViX',            language: 'Spanish', priceText: 'Free',          note: 'Free with ads · ViX+ price varies' },
+      { name: 'YouTube TV',     language: 'English', priceText: 'From $72.99/mo', note: 'From $72.99/mo' },
+      { name: 'Hulu Live TV',   language: 'English', priceText: 'From $82.99/mo', note: 'From $82.99/mo' },
+      { name: 'FuboTV',         language: 'English', priceText: 'From $84.99/mo', note: 'From $84.99/mo' },
+      { name: 'DirecTV Stream', language: 'English', priceText: 'From $79.99/mo', note: 'From $79.99/mo' },
+      { name: 'Sling TV',       language: 'English', priceText: 'From $40/mo',    note: 'From $40/mo' },
+    ],
+  },
+  {
+    flag: '🇨🇦',
+    region: 'Canada',
+    providers: [
+      { name: 'CTV',       language: 'English', priceText: 'Free Broadcast',    note: 'Select matches · Free over-the-air where available' },
+      { name: 'Noovo',     language: 'French',  priceText: 'Free Broadcast',    note: 'Select French matches · Free over-the-air where available' },
+      { name: 'TSN',       language: 'English', priceText: 'Paid Subscription', note: 'All 104 matches · Paid TV/streaming subscription' },
+      { name: 'RDS / RDS2',language: 'French',  priceText: 'Paid Subscription', note: 'All 104 matches in French · Paid TV/streaming subscription' },
+      { name: 'Crave',     language: 'English', priceText: 'Paid Subscription', note: 'Select CTV live coverage · Requires Crave subscription' },
+    ],
+  },
+  {
+    flag: '🇲🇽',
+    region: 'Mexico',
+    providers: [
+      { name: 'Canal 5 / Las Estrellas', language: 'Spanish', priceText: 'Free Broadcast', note: 'Selected matches · Free broadcast TV' },
+      { name: 'Azteca 7',                language: 'Spanish', priceText: 'Free Broadcast', note: 'Selected matches · Free broadcast TV' },
+      { name: 'ViX',                     language: 'Spanish', priceText: 'Limited Free + Paid Pass', note: '32 matches free · All 104 with Pase Mundial from 499 MXN · annual Premium may include access' },
+      { name: 'TUDN',                    language: 'Spanish', priceText: 'Paid Access',     note: 'Paid TV/streaming access where available' },
+    ],
+  },
+  {
+    flag: '🌍',
+    region: 'Global',
+    providers: [
+      { name: 'FIFA+', language: 'Multiple', priceText: 'Varies by Country', note: 'Highlights/news · Live availability varies by country' },
+    ],
+  },
+];
+
+// ── Watch sheet UI ────────────────────────────────────────────────────────────
+
+function PriceBadge({ text }: { text: string }) {
+  const isFree = text === 'Free Broadcast';
+  return (
+    <View style={[ws.priceBadge, isFree ? ws.priceBadgeFree : ws.priceBadgeNavy]}>
+      <Text style={[ws.priceBadgeText, isFree ? ws.priceBadgeTextFree : ws.priceBadgeTextNavy]}>
+        {text}
+      </Text>
+    </View>
+  );
+}
+
+function ProviderRow({ provider, isLast }: { provider: Provider; isLast: boolean }) {
+  return (
+    <View style={[ws.providerRow, !isLast && ws.providerRowBorder]}>
+      <View style={ws.providerMain}>
+        <Text style={ws.providerName}>{provider.name}</Text>
+        <Text style={ws.providerMeta}>{provider.note}</Text>
+      </View>
+      <PriceBadge text={provider.priceText} />
+    </View>
+  );
+}
+
+function RegionSection({ item }: { item: WatchRegion }) {
+  return (
+    <View style={ws.regionBlock}>
+      <Text style={ws.regionName}>{item.region}</Text>
+      <View style={ws.providerList}>
+        {item.providers.map((p, i) => (
+          <ProviderRow key={p.name} provider={p} isLast={i === item.providers.length - 1} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function WatchSheet({ onClose }: { onClose: () => void }) {
+  return (
+    <View style={ws.overlay}>
+      <Pressable style={ws.backdrop} onPress={onClose} />
+      <View style={ws.sheet}>
+        <View style={ws.handle} />
+
+        <View style={ws.header}>
+          <View>
+            <Text style={ws.title}>Where to Watch</Text>
+            <Text style={ws.subtitle}>2026 FIFA World Cup</Text>
+          </View>
+          <Pressable
+            style={ws.closeBtn}
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            hitSlop={8}
+          >
+            <Text style={ws.closeBtnText}>✕</Text>
+          </Pressable>
+        </View>
+
+        <ScrollView
+          contentContainerStyle={ws.body}
+          showsVerticalScrollIndicator={false}
+        >
+          {WATCH_DATA.map((item) => (
+            <RegionSection key={item.region} item={item} />
+          ))}
+
+          <View style={ws.footer}>
+            <Text style={ws.footnote}>
+              Broadcast availability and streaming prices vary by country and may change.
+            </Text>
+            <Text style={ws.source}>Source: FIFA Media · Updated Jun 2026</Text>
+          </View>
+        </ScrollView>
+      </View>
+    </View>
+  );
+}
+
+const ws = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  backdrop: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.42)',
+  },
+  sheet: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 40,
+    maxHeight: '85%',
+  },
+  handle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.cardBorder,
+    alignSelf: 'center',
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    letterSpacing: 0.2,
+    marginBottom: 2,
+  },
+  subtitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: colors.textMuted,
+    letterSpacing: 0.4,
+  },
+  closeBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeBtnText: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  body: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    gap: 20,
+  },
+  // Region
+  regionBlock: {
+    gap: 0,
+  },
+  regionName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  providerList: {
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: 12,
+    backgroundColor: colors.background,
+    overflow: 'hidden',
+  },
+  providerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+  },
+  providerRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  providerMain: {
+    flex: 1,
+    marginRight: 10,
+    gap: 2,
+  },
+  providerName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    letterSpacing: 0.1,
+  },
+  providerMeta: {
+    fontSize: 11,
+    color: colors.textMuted,
+    letterSpacing: 0.2,
+  },
+  // Price badge
+  priceBadge: {
+    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderWidth: 1,
+    flexShrink: 1,
+  },
+  priceBadgeFree: {
+    backgroundColor: colors.groupPillBg,
+    borderColor: colors.accent,
+  },
+  priceBadgeNavy: {
+    backgroundColor: '#EDF1F6',
+    borderColor: colors.textNavy,
+  },
+  priceBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  priceBadgeTextFree: {
+    color: colors.accent,
+  },
+  priceBadgeTextNavy: {
+    color: colors.textNavy,
+  },
+  // Footer
+  footer: {
+    gap: 4,
+    paddingBottom: 4,
+  },
+  footnote: {
+    fontSize: 11,
+    color: colors.textMuted,
+    letterSpacing: 0.2,
+    lineHeight: 17,
+  },
+  source: {
+    fontSize: 10,
+    color: colors.textMuted,
+    letterSpacing: 0.4,
+    opacity: 0.7,
+  },
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -78,18 +377,9 @@ function groupByLocalDate(matches: WC26Match[], tz: string): DateGroup[] {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, list]) => ({
       date,
-      // e.g. "THU, JUN 11"
       label: formatMatchDate(list[0]!.dateUtc, tz).toUpperCase(),
       matches: list.map((m) => adaptForTz(m, tz)),
     }));
-}
-
-function tzLabel(tzValue: string): string {
-  // Prefer an explicit named match over "My Local Time" when possible
-  const named = TIMEZONES.slice(1).find((t) => t.value === tzValue);
-  if (named) return named.label;
-  if (TIMEZONES[0]?.value === tzValue) return TIMEZONES[0].label;
-  return tzValue; // raw IANA string as fallback
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -99,121 +389,49 @@ interface MatchesScreenProps {
 }
 
 export function MatchesScreen({ onMatchPress }: MatchesScreenProps) {
-  const [selectedTzId, setSelectedTzId] = useState<string>('local');
+  const [watchVisible, setWatchVisible] = useState(false);
 
-const selectedTzOption =
-  TIMEZONES.find((tz) => tz.id === selectedTzId) ?? TIMEZONES[0];
+  const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const dateGroups = groupByLocalDate(WC26_MATCHES, deviceTz);
 
-const selectedTz = selectedTzOption.value;
-  const [tzReady, setTzReady]       = useState(false);
-  const [modalOpen, setModalOpen]   = useState(false);
-
-  // Load persisted timezone once on mount
-  useEffect(() => {
-    AsyncStorage.getItem(TZ_KEY)
-      .then((stored) => {
-        if (stored) setSelectedTzId(stored);
-  })
-      .catch(() => { /* ignore read errors, keep device default */ })
-      .finally(() => setTzReady(true));
-  }, []);
-
-  const handleSelectTz = useCallback((id: string) => {
-    setSelectedTzId(id);
-    setModalOpen(false);
-    AsyncStorage.setItem(TZ_KEY, id).catch(() => {});
-}, []);
-
-  if (!tzReady) {
+  if (dateGroups.length === 0) {
     return (
       <View style={styles.centerBox}>
-        <ActivityIndicator color={colors.accent} size="large" />
+        <Text style={styles.emptyText}>No matches available yet</Text>
       </View>
     );
   }
 
-  const dateGroups = groupByLocalDate(WC26_MATCHES, selectedTz);
-  const label = tzLabel(selectedTz);
-
   return (
     <View style={styles.root}>
-      {/* ── Timezone indicator bar ────────────────────────────────────────── */}
-      <View style={styles.tzBar}>
-        <Text style={styles.tzBarText}>Times shown in:  {label}</Text>
-        <Pressable
-          style={styles.settingsBtn}
-          onPress={() => setModalOpen(true)}
-          accessibilityLabel="Change timezone"
-        >
-          <Text style={styles.settingsBtnText}>⚙</Text>
-        </Pressable>
-      </View>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {dateGroups.map((group) => (
+          <DateSection
+            key={group.date}
+            group={group}
+            onMatchPress={onMatchPress}
+            onWatchPress={() => setWatchVisible(true)}
+          />
+        ))}
+      </ScrollView>
 
-      {/* ── Match list ───────────────────────────────────────────────────── */}
-      {dateGroups.length === 0 ? (
-        <View style={styles.centerBox}>
-          <Text style={styles.emptyText}>No matches available yet</Text>
-        </View>
-      ) : (
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {dateGroups.map((group) => (
-            <DateSection
-              key={group.date}
-              group={group}
-              onMatchPress={onMatchPress}
-            />
-          ))}
-        </ScrollView>
-      )}
-
-      {/* ── Timezone selector modal ──────────────────────────────────────── */}
       <Modal
-        visible={modalOpen}
+        visible={watchVisible}
         transparent
         animationType="slide"
-        onRequestClose={() => setModalOpen(false)}
+        onRequestClose={() => setWatchVisible(false)}
       >
-        {/* Tapping the dark overlay closes the modal */}
-        <Pressable style={styles.modalOverlay} onPress={() => setModalOpen(false)}>
-          {/* Inner Pressable stops the tap from bubbling to the overlay */}
-          <Pressable style={styles.modalSheet}>
-            <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>Time Settings</Text>
-
-            {TIMEZONES.map((tz) => {
-              const isActive = tz.id === selectedTzId;
-              return (
-                <Pressable
-                  key={tz.id}
-                  style={[styles.tzOption, isActive && styles.tzOptionActive]}
-                  onPress={() => handleSelectTz(tz.id)}
-                >
-                  <Text
-                    style={[
-                      styles.tzOptionText,
-                      isActive && styles.tzOptionTextActive,
-                    ]}
-                  >
-                    {tz.label}
-                  </Text>
-                  {isActive && (
-                    <Text style={styles.tzCheckmark}>✓</Text>
-                  )}
-                </Pressable>
-              );
-            })}
-          </Pressable>
-        </Pressable>
+        <WatchSheet onClose={() => setWatchVisible(false)} />
       </Modal>
     </View>
   );
 }
 
-// ── Styles ───────────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   root: {
@@ -230,106 +448,11 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     letterSpacing: 0.4,
   },
-
-  // Timezone indicator bar
-  tzBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: colors.headerBg,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.divider,
-  },
-  tzBarText: {
-    fontSize: 11,
-    color: colors.textSecondary,
-    letterSpacing: 0.5,
-    flexShrink: 1,
-  },
-  settingsBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 10,
-  },
-  settingsBtnText: {
-    fontSize: 15,
-    color: colors.textSecondary,
-  },
-
-  // Match list
   scroll: {
     flex: 1,
   },
   scrollContent: {
-    paddingTop: 4,
+    paddingTop: 8,
     paddingBottom: 40,
-  },
-
-  // Modal
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.72)',
-    justifyContent: 'flex-end',
-  },
-  modalSheet: {
-    backgroundColor: colors.card,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 36,
-    borderTopWidth: 1,
-    borderColor: colors.cardBorder,
-  },
-  modalHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.textMuted,
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    letterSpacing: 1,
-    marginBottom: 16,
-  },
-  tzOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 14,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    marginBottom: 4,
-  },
-  tzOptionActive: {
-    backgroundColor: colors.groupPillBg,
-    borderWidth: 1,
-    borderColor: colors.accent,
-  },
-  tzOptionText: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    letterSpacing: 0.3,
-  },
-  tzOptionTextActive: {
-    color: colors.accent,
-    fontWeight: '600',
-  },
-  tzCheckmark: {
-    fontSize: 15,
-    color: colors.accent,
-    fontWeight: '700',
   },
 });
