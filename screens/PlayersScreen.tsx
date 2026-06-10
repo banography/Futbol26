@@ -390,14 +390,29 @@ export function PlayersScreen() {
           </Pressable>
 
           {/* Country header */}
-          <View style={s.rosterHeader}>
-            <TeamFlagImage flagUrl={getFlagUrl(selectedSquad.teamCode)} width={80} height={50} />
-            <Text style={s.rosterTeamName}>{selectedSquad.teamName}</Text>
-            {selectedSquad.headCoach ? (
-              <Text style={s.rosterCoach}>Head Coach: {selectedSquad.headCoach}</Text>
-            ) : null}
-          </View>
+<View style={s.rosterHeader}>
+  <TeamFlagImage flagUrl={getFlagUrl(selectedSquad.teamCode)} width={130} height={80} />
+  <Text style={s.rosterTeamName}>{selectedSquad.teamName}</Text>
+</View>
 
+{/* Head coach */}
+{selectedSquad.headCoach ? (
+  <View style={s.positionSection}>
+    <View style={s.positionHeaderRow}>
+      <Text style={s.positionLabel}>HEAD COACH</Text>
+      <View style={s.positionLine} />
+    </View>
+
+    <View style={s.coachCard}>
+      <Text style={s.coachName}>{selectedSquad.headCoach}</Text>
+      {selectedSquad.headCoachNationality ? (
+        <Text style={s.coachMeta}>
+          Nationality: {selectedSquad.headCoachNationality}
+        </Text>
+      ) : null}
+    </View>
+  </View>
+) : null}
           {/* Players by position */}
           {POSITION_ORDER.map((pos) => {
             const grouped = selectedSquad.players
@@ -609,26 +624,30 @@ const s = StyleSheet.create({
     letterSpacing: 0.2,
   },
   rosterHeader: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 24,
-  },
+  paddingHorizontal: 20,
+  paddingTop: 12,
+  paddingBottom: 30,
+  alignItems: 'center',
+  justifyContent: 'center',
+},
   rosterFlagText: {
     fontSize: 40,
     marginBottom: 10,
   },
   rosterTeamName: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: colors.textPrimary,
-    letterSpacing: 0.3,
-    marginBottom: 4,
-  },
-  rosterCoach: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    letterSpacing: 0.3,
-  },
+  fontSize: 28,
+  fontWeight: '800',
+  color: colors.textPrimary,
+  letterSpacing: 0.3,
+  marginTop: 12,
+  marginBottom: 0,
+  textAlign: 'center',
+},
+  // rosterCoach: {
+  //   fontSize: 13,
+  //   color: colors.textSecondary,
+  //   letterSpacing: 0.3,
+  // },
 
   // Position section
   positionSection: {
@@ -659,4 +678,27 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: colors.cardBorder,
   },
-});
+    coachCard: {
+  backgroundColor: colors.card,
+  borderTopWidth: 1,
+  borderBottomWidth: 1,
+  borderColor: colors.cardBorder,
+  paddingHorizontal: 16,
+  paddingVertical: 14,
+},
+
+coachName: {
+  fontSize: 15,
+  fontWeight: '600',
+  color: colors.textPrimary,
+  letterSpacing: 0.2,
+},
+
+coachMeta: {
+  fontSize: 12,
+  color: colors.textSecondary,
+  letterSpacing: 0.3,
+  marginTop: 3,
+},
+  },
+);
