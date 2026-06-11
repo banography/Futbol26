@@ -27,4 +27,10 @@ export const colors = {
   headerBg:        '#FFFFFF',
   watchPillBg:     '#EEF0F8',   // neutral blue-gray
   watchPillText:   '#4A5680',   // slate blue
+  amber:           '#B45309',   // amber — 2nd-place / wildcard indicators
+  neutralSelected: '#2D2D2D',   // bracket pick selected dark
+  neutralUnselected:'#F0F0F0',  // bracket pick unselected bg
+  neutralBorder:   '#E0E0E0',   // bracket pick unselected border
+  neutralText:     '#6B6B6B',   // bracket pick label text
+  toggleActive:    '#EDF1F6',   // active toggle / watch pill bg
 } as const;

@@ -25,13 +25,16 @@ const FIFA_TO_CDN: Record<string, string> = {
 };
 
 function adaptTeam(team: WC26Team): AppMatch['teamA'] {
+  if (team.code === 'TBD') {
+    return { id: 'tbd', name: 'TBD', flagEmoji: '', flagUrl: null, winProbability: null };
+  }
   const cdnCode = FIFA_TO_CDN[team.code] ?? team.code.slice(0, 2).toLowerCase();
   return {
-    id:              team.code.toLowerCase(),
-    name:            team.name,
-    flagEmoji:       team.flag,
-    flagUrl:         `https://flagcdn.com/w160/${cdnCode}.png`,
-    winProbability:  null,
+    id:             team.code.toLowerCase(),
+    name:           team.name,
+    flagEmoji:      team.flag,
+    flagUrl:        `https://flagcdn.com/w160/${cdnCode}.png`,
+    winProbability: null,
   };
 }
 
@@ -67,7 +70,9 @@ function adaptMatch(m: WC26Match): AppMatch {
     country:     m.country,
     watchOptions: [],
     status:      m.status === 'finished' ? 'final' : m.status,
-    score:       null,
+    score:       m.homeScore !== null && m.awayScore !== null
+      ? { teamA: m.homeScore, teamB: m.awayScore }
+      : null,
   };
 }
 
@@ -76,8 +81,9 @@ const ADAPTED_MATCHES: AppMatch[] = WC26_MATCHES.map(adaptMatch);
 
 // ── Public helpers ────────────────────────────────────────────────────────────
 
-/** Return the flagcdn.com image URL for a FIFA three-letter country code. */
-export function getFlagUrl(fifaCode: string): string {
+/** Return the flagcdn.com image URL for a FIFA three-letter country code, or null for TBD. */
+export function getFlagUrl(fifaCode: string): string | null {
+  if (fifaCode === 'TBD') return null;
   const cdnCode = FIFA_TO_CDN[fifaCode] ?? fifaCode.slice(0, 2).toLowerCase();
   return `https://flagcdn.com/w160/${cdnCode}.png`;
 }

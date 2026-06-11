@@ -67,14 +67,14 @@ export function ProjectedXIToggle({ match }: ProjectedXIToggleProps) {
           {/* Head coach */}
           {squad.headCoach ? (
             <View>
-              <View style={styles.groupHeader}>
+              <View style={[styles.groupHeader, styles.coachGroupHeader]}>
                 <Text style={styles.groupTitle}>HEAD COACH</Text>
                 <View style={styles.headerLine} />
               </View>
               <View style={styles.coachInfo}>
                 <Text style={styles.coachName}>{squad.headCoach}</Text>
                 {squad.headCoachNationality ? (
-                  <Text style={styles.coachNat}>Nationality: {squad.headCoachNationality}</Text>
+                  <Text style={styles.coachNat}>Nationality · {squad.headCoachNationality}</Text>
                 ) : null}
               </View>
             </View>
@@ -89,11 +89,12 @@ export function ProjectedXIToggle({ match }: ProjectedXIToggleProps) {
                   <Text style={styles.groupTitle}>{GROUP_LABEL[pos]}</Text>
                   <View style={styles.headerLine} />
                 </View>
-                {group.map((player) => (
+                {group.map((player, i) => (
                   <ProjectedPlayerCard
                     key={player.id}
                     player={player}
                     teamFlag={selectedTeam.flagEmoji}
+                    isLast={i === group.length - 1}
                   />
                 ))}
               </View>
@@ -131,7 +132,7 @@ const styles = StyleSheet.create({
   toggleRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 20,
+    marginBottom: 0,
     paddingHorizontal: 16,
   },
   togglePill: {
@@ -139,34 +140,38 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     paddingHorizontal: 12,
     borderRadius: 10,
-    backgroundColor: colors.card,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: '#E0E0E0',
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 44,
   },
   togglePillActive: {
-    backgroundColor: colors.groupPillBg,
-    borderColor: colors.accent,
+    backgroundColor: '#EDF1F6',
+    borderColor: '#1F3B5D',
   },
   toggleText: {
     fontSize: 13,
     fontWeight: '600',
-    color: colors.tabInactiveText,
+    color: '#9AA3AF',
     letterSpacing: 0.3,
     textAlign: 'center',
   },
   toggleTextActive: {
-    color: colors.accent,
+    color: '#1F3B5D',
   },
   groupHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
+    paddingTop: 17,
+    paddingBottom: 0,
+    gap: 12,
+  },
+  coachGroupHeader: {
     paddingTop: 16,
     paddingBottom: 8,
-    gap: 12,
   },
   groupTitle: {
     fontSize: 10,
@@ -176,7 +181,7 @@ const styles = StyleSheet.create({
   },
   coachInfo: {
     paddingHorizontal: 16,
-    paddingBottom: 10,
+    paddingBottom: 0,
   },
   coachName: {
     fontSize: 15,
@@ -187,9 +192,9 @@ const styles = StyleSheet.create({
   coachNat: {
     fontSize: 12,
     fontWeight: '400',
-    color: colors.textSecondary,
+    color: '#5F6875',
     letterSpacing: 0.3,
-    marginTop: 2,
+    marginTop: 6,
   },
   emptyState: {
     paddingVertical: 36,

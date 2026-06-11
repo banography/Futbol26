@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import {
   View,
   StyleSheet,
-  SafeAreaView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { AppHeader } from '../components/AppHeader';
 import { TopTabs, TabId } from '../components/TopTabs';

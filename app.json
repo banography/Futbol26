@@ -1,5 +1,6 @@
 {
   "expo": {
+    "newArchEnabled": true,
     "name": "Futbol26",
     "slug": "futbol26",
     "scheme": "futbol26",
@@ -14,10 +15,12 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.bani.futbol26"
+      "bundleIdentifier": "com.bani.futbol26",
+      "buildNumber": "1"
     },
     "android": {
       "package": "com.bani.futbol26",
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0f0f1e"

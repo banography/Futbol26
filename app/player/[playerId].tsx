@@ -25,6 +25,7 @@ import { getSquad } from '../../src/data/worldCup2026Squads';
 import { getTeamColors } from '../../src/data/teamColors';
 import type { PositionCode, Player } from '../../src/data/worldCup2026Squads';
 import { getWikipediaEntry } from '../../src/data/generated/playerWikipedia.generated';
+import { fonts } from '../../constants/typography';
 
 // ── Light palette — matches the app's light FUTBOL26 theme ───────────────────
 const L = {
@@ -115,22 +116,22 @@ function extractClubCountry(club: string): string | null {
   return m ? (CLUB_COUNTRY_LABEL[m[1]] ?? null) : null;
 }
 
-function generateSummary(
-  fullName: string,
-  jerseyNumber: number,
-  teamName: string,
-  club: string,
-  position: PositionCode,
-): string {
-  const cleanClub = stripCountry(club);
-  const clubCountry = extractClubCountry(club);
-  const pos = POSITION_LABEL[position].toLowerCase();
-  const part1 = `${fullName} wears #${jerseyNumber} for ${teamName} at the 2026 World Cup.`;
-  const part2 = clubCountry
-    ? `A ${pos} by trade, he plays club football in ${clubCountry} for ${cleanClub}.`
-    : `A ${pos} by trade, he represents ${cleanClub} at club level.`;
-  return `${part1} ${part2}`;
-}
+// function generateSummary(
+//   fullName: string,
+//   jerseyNumber: number,
+//   teamName: string,
+//   club: string,
+//   position: PositionCode,
+// ): string {
+//   const cleanClub = stripCountry(club);
+//   const clubCountry = extractClubCountry(club);
+//   const pos = POSITION_LABEL[position].toLowerCase();
+//   const part1 = `${fullName} wears #${jerseyNumber} for ${teamName} at the 2026 World Cup.`;
+//   const part2 = clubCountry
+//     ? `A ${pos} by trade, he plays club football in ${clubCountry} for ${cleanClub}.`
+//     : `A ${pos} by trade, he represents ${cleanClub} at club level.`;
+//   return `${part1} ${part2}`;
+// }
 
 function getInstagramUrl(_player: Player): string | null {
   return null;
@@ -178,7 +179,7 @@ function LightHeroBg({ teamColor }: { teamColor: string }) {
 function IgIcon() {
   return (
     <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-      <Rect x="2" y="2" width="20" height="20" rx="6" stroke={L.accent} strokeWidth="2" />
+      <Rect x="2" y="2" width="20" height="20" rx="6" stroke={L.textSecondary} strokeWidth="2" />
       <Circle cx="12" cy="12" r="4" stroke={L.accent} strokeWidth="2" />
       <Circle cx="17.5" cy="6.5" r="1.5" fill={L.accent} />
     </Svg>
@@ -198,6 +199,14 @@ function WikiIcon() {
       />
     </Svg>
   );
+}
+//cm to feet
+function formatHeight(heightCm: number): string {
+  const totalInches = Math.round(heightCm / 2.54);
+  const feet = Math.floor(totalInches / 12);
+  const inches = totalInches % 12;
+
+  return `${feet}'${inches}" · ${heightCm} cm`;
 }
 
 // ── Screen ────────────────────────────────────────────────────────────────────
@@ -234,17 +243,22 @@ export default function PlayerDetailScreen() {
   const firstName = nameParts[0].toUpperCase();
   const lastName = nameParts.slice(1).join(' ').toUpperCase();
 
-  const details: { label: string; value: string }[] = [
-    { label: 'Position',      value: POSITION_LABEL[player.position] },
-    { label: 'Date of Birth', value: formatDOB(player.dateOfBirth) },
-    { label: 'Age',           value: String(calcAge(player.dateOfBirth)) },
-    { label: 'Height',        value: `${player.heightCm} cm` },
-    { label: 'Current Club',  value: stripCountry(player.club) },
-  ];
+  const clubCountry = extractClubCountry(player.club);
 
-  const summary = generateSummary(
-    player.fullName, player.jerseyNumber, teamName, player.club, player.position,
-  );
+const details: { label: string; value: string }[] = [
+  { label: 'Squad Number',  value: `#${player.jerseyNumber}` },
+  { label: 'Position',      value: POSITION_LABEL[player.position] },
+  { label: 'Nation',        value: teamName },
+  { label: 'Date of Birth', value: formatDOB(player.dateOfBirth) },
+  { label: 'Age',           value: String(calcAge(player.dateOfBirth)) },
+  { label: 'Height',        value: formatHeight(player.heightCm) },
+  { label: 'Current Club',  value: stripCountry(player.club) },
+  ...(clubCountry ? [{ label: 'Club Country', value: clubCountry }] : []),
+];
+
+  // const summary = generateSummary(
+  //   player.fullName, player.jerseyNumber, teamName, player.club, player.position,
+  // );
 
   const igUrl = getInstagramUrl(player);
   const wikiEntry = getWikipediaEntry(teamCode, player.jerseyNumber);
@@ -273,34 +287,44 @@ export default function PlayerDetailScreen() {
           </Pressable>
 
           <View style={ss.heroContent}>
-            {/* Jersey avatar — large, centered */}
-            <PlayerJerseyAvatar
-              teamCode={teamCode}
-              jerseyNumber={player.jerseyNumber}
-              width={120}
-              height={135}
-            />
+  {/* Jersey avatar — large, centered */}
+  <PlayerJerseyAvatar
+    teamCode={teamCode}
+    jerseyNumber={player.jerseyNumber}
+    width={120}
+    height={135}
+  />
 
-            {/* Player name */}
-            <View style={ss.nameBox}>
-              <Text style={ss.firstName} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
-                {firstName}
-              </Text>
-              {lastName ? (
-                <Text style={ss.lastName} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
-                  {lastName}
-                </Text>
-              ) : null}
-            </View>
+  {/* Player name */}
+  <View style={ss.nameBox}>
+    <Text
+      style={ss.firstName}
+      numberOfLines={1}
+      adjustsFontSizeToFit
+      minimumFontScale={0.7}
+    >
+      {firstName}
+    </Text>
 
-            {/* Flag + team name */}
-            <View style={ss.heroTeamBox}>
-              <TeamFlagImage flagUrl={getFlagUrl(teamCode)} width={32} height={20} />
-              <Text style={ss.heroTeamLabel}>{teamName}</Text>
-            </View>
-          </View>
-        </View>
+    {lastName ? (
+      <Text
+        style={ss.lastName}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.7}
+      >
+        {lastName}
+      </Text>
+    ) : null}
+  </View>
 
+  {/* Flag + team name */}
+  <View style={ss.heroTeamBox}>
+    <TeamFlagImage flagUrl={getFlagUrl(teamCode)} width={46} height={32} />
+    <Text style={ss.heroTeamLabel}>{teamName}</Text>
+  </View>
+</View>
+</View>
         {/* ── DETAIL CONTENT ──────────────────────────────────────────────── */}
         <View style={ss.body}>
           {/* Detail rows card */}
@@ -316,10 +340,10 @@ export default function PlayerDetailScreen() {
             ))}
           </View>
 
-          {/* Summary card */}
+          {/* Summary card
           <View style={ss.card}>
             <Text style={ss.bioText}>{summary}</Text>
-          </View>
+          </View> */}
 
           {/* Social links — wiki always shown; Instagram only when verified */}
           <View style={ss.linksSection}>
@@ -395,61 +419,65 @@ const ss = StyleSheet.create({
     lineHeight: 20,
   },
   heroContent: {
-    flex: 1,
-    justifyContent: 'space-evenly',
-    alignItems: 'center',
-    paddingTop: 56,
-    paddingBottom: 20,
-  },
+  flex: 1,
+  justifyContent: 'flex-start',
+  alignItems: 'center',
+  paddingTop: 36,
+  paddingBottom: 12,
+  gap: 12,
+},
   nameBox: {
-    alignItems: 'center',
-    paddingHorizontal: 24,
-  },
+  alignItems: 'center',
+  paddingHorizontal: 24,
+  marginTop: 2,
+},
   firstName: {
-    fontSize: 32,
-    fontWeight: '800',
+    fontSize: 36,
+    fontFamily: fonts.barlowBold,
     color: L.textPrimary,
     letterSpacing: 3,
     textAlign: 'center',
-    lineHeight: 36,
+    lineHeight: 40,
   },
   lastName: {
-    fontSize: 32,
-    fontWeight: '800',
+    fontSize: 36,
+    fontFamily: fonts.barlowBold,
     color: L.textPrimary,
     letterSpacing: 3,
     textAlign: 'center',
-    lineHeight: 36,
+    lineHeight: 40,
   },
   heroTeamBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingBottom: 4,
-  },
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 10,
+  marginTop: 2,
+  paddingBottom: 4,
+},
   heroTeamLabel: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: L.textPrimary,
-    letterSpacing: 0.3,
-  },
+  fontSize: 18,
+  fontFamily: fonts.barlowSemi,
+  color: L.textPrimary,
+  letterSpacing: 0.2,
+},
 
   // ── Detail body — fixed, no scroll
-  body: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 14,
-    justifyContent: 'space-between',
-  },
+body: {
+  flex: 1,
+  paddingHorizontal: 16,
+  paddingTop: 10,
+  paddingBottom: 14,
+  justifyContent: 'flex-start',
+  gap: 18,
+},
   linksSection: {
     flexDirection: 'row',
     gap: 12,
   },
   // Team full name — bridges the hero and cards
   teamFullName: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 13,
+    fontFamily: fonts.barlowBold,
     color: L.textMuted,
     letterSpacing: 1,
     textAlign: 'center',
@@ -477,15 +505,15 @@ const ss = StyleSheet.create({
     paddingVertical: 9,
   },
   detailLabel: {
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 12,
+    fontFamily: fonts.barlowSemi,
     color: L.textMuted,
     letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
   detailValue: {
     fontSize: 14,
-    fontWeight: '500',
+    fontFamily: fonts.interSemi,
     color: L.textPrimary,
     letterSpacing: 0.2,
     flexShrink: 1,
@@ -506,8 +534,8 @@ const ss = StyleSheet.create({
     paddingHorizontal: 4,
   },
   sectionTitle: {
-    fontSize: 10,
-    fontWeight: '800',
+    fontSize: 12,
+    fontFamily: fonts.barlowBold,
     color: L.accent,
     letterSpacing: 2,
   },
@@ -520,10 +548,10 @@ const ss = StyleSheet.create({
   // ── Quick Summary text
   bioText: {
     fontSize: 14,
-    fontWeight: '400',
+    fontFamily: fonts.interRegular,
     color: L.textPrimary,
     letterSpacing: 0.2,
-    lineHeight: 20,
+    lineHeight: 22,
     paddingVertical: 8,
     paddingHorizontal: 16,
   },
@@ -556,9 +584,9 @@ const ss = StyleSheet.create({
     opacity: 0.7,
   },
   footerBtnLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: L.accent,
+    fontSize: 14,
+    fontFamily: fonts.barlowSemi,
+    color: L.textSecondary,
     letterSpacing: 0.3,
   },
 
@@ -582,6 +610,7 @@ const ss = StyleSheet.create({
   },
   mutedText: {
     fontSize: 15,
+    fontFamily: fonts.interRegular,
     color: L.textMuted,
     letterSpacing: 0.3,
   },

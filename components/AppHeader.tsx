@@ -18,18 +18,7 @@ export function AppHeader() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    backgroundColor: colors.headerBg,
-  },
-  headerRow: {
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 0,
-  },
-  headerLogo: {
-    width: 200,
-    height: 40,
-    alignSelf: 'center',
-  },
+  container:  { backgroundColor: colors.headerBg },
+  headerRow:  { alignItems: 'center', paddingHorizontal: 20, paddingTop: 10, paddingBottom: 0 },
+  headerLogo: { width: 200, height: 40, alignSelf: 'center' },
 });

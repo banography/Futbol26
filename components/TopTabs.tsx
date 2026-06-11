@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { colors } from '../constants/colors';
+import { fonts } from '../constants/typography';
 
 export type TabId = 'matches' | 'tournament' | 'players' | 'my-bracket';
 
@@ -47,10 +48,10 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   label: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 15,
+    fontFamily: fonts.barlowBold,
     color: colors.tabInactiveText,
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
   },
   labelActive: {
     color: colors.tabActiveText,

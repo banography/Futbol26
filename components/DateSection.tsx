@@ -2,6 +2,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { DateGroup, Match } from '../types/match';
 import { MatchCard } from './MatchCard';
 import { colors } from '../constants/colors';
+import { fonts } from '../constants/typography';
 
 interface DateSectionProps {
   group: DateGroup;
@@ -15,15 +16,15 @@ export function DateSection({ group, onMatchPress, onWatchPress }: DateSectionPr
       <View style={styles.headerRow}>
         <Text style={styles.label}>{group.label}</Text>
         <View style={styles.line} />
-        {onWatchPress != null && (
+        {onWatchPress && (
           <Pressable
-            style={({ pressed }) => [styles.watchPill, pressed && styles.watchPillPressed]}
+            style={({ pressed }) => [styles.watchBtn, pressed && styles.watchBtnPressed]}
             onPress={onWatchPress}
-            hitSlop={6}
             accessibilityRole="button"
             accessibilityLabel="Where to watch"
+            hitSlop={6}
           >
-            <Text style={styles.watchPillText}>Watch</Text>
+            <Text style={styles.watchText}>WATCH</Text>
           </Pressable>
         )}
       </View>
@@ -35,43 +36,11 @@ export function DateSection({ group, onMatchPress, onWatchPress }: DateSectionPr
 }
 
 const styles = StyleSheet.create({
-  container: {
-    marginBottom: 8,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 10,
-    gap: 10,
-  },
-  label: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.textNavy,
-    letterSpacing: 1.5,
-  },
-  line: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.divider,
-  },
-  watchPill: {
-    borderWidth: 1,
-    borderColor: colors.textNavy,
-    borderRadius: 10,
-    backgroundColor: '#EDF1F6',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  watchPillPressed: {
-    opacity: 0.6,
-  },
-  watchPillText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.textNavy,
-    letterSpacing: 0.4,
-  },
+  container:      { marginBottom: 8 },
+  headerRow:      { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 16, paddingBottom: 10, gap: 12 },
+  label:          { fontSize: 13, fontFamily: fonts.barlowBold, color: colors.textNavy, letterSpacing: 1.5 },
+  line:           { flex: 1, height: 1, backgroundColor: colors.divider },
+  watchBtn:       { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, backgroundColor: '#EDF1F6', borderWidth: 1, borderColor: colors.textNavy },
+  watchBtnPressed:{ opacity: 0.65 },
+  watchText:      { fontSize: 11, fontFamily: fonts.barlowBold, color: colors.textNavy, letterSpacing: 1.5 },
 });

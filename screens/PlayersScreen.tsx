@@ -18,6 +18,7 @@ import { PlayerJerseyAvatar } from '../components/PlayerJerseyAvatar';
 import { TeamFlagImage } from '../components/TeamFlagImage';
 import { getFlagUrl } from '../services/futbolApi';
 import { colors } from '../constants/colors';
+import { fonts } from '../constants/typography';
 
 // ── Flag map ──────────────────────────────────────────────────────────────────
 
@@ -464,6 +465,7 @@ const s = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 15,
+    fontFamily: fonts.interRegular,
     color: colors.textPrimary,
     height: 44,
   },
@@ -482,7 +484,7 @@ const s = StyleSheet.create({
   },
   listHeaderText: {
     fontSize: 11,
-    fontWeight: '700',
+    fontFamily: fonts.barlowBold,
     color: colors.textSecondary,
     letterSpacing: 1.5,
   },
@@ -513,7 +515,7 @@ const s = StyleSheet.create({
   countryName: {
     flex: 1,
     fontSize: 15,
-    fontWeight: '500',
+    fontFamily: fonts.barlowBold,
     color: colors.textPrimary,
     letterSpacing: 0.2,
   },
@@ -528,7 +530,7 @@ const s = StyleSheet.create({
   },
   searchSectionLabel: {
     fontSize: 10,
-    fontWeight: '800',
+    fontFamily: fonts.barlowBold,
     color: colors.textSecondary,
     letterSpacing: 2,
   },
@@ -564,7 +566,7 @@ const s = StyleSheet.create({
   },
   searchName: {
     fontSize: 14,
-    fontWeight: '600',
+    fontFamily: fonts.barlowSemi,
     color: colors.textPrimary,
     letterSpacing: 0.1,
   },
@@ -575,6 +577,7 @@ const s = StyleSheet.create({
   },
   searchSub: {
     fontSize: 11,
+    fontFamily: fonts.interMedium,
     color: colors.textSecondary,
     letterSpacing: 0.3,
     flexShrink: 1,
@@ -589,13 +592,14 @@ const s = StyleSheet.create({
   },
   emptyTitle: {
     fontSize: 15,
-    fontWeight: '500',
+    fontFamily: fonts.interRegular,
     color: colors.textPrimary,
     textAlign: 'center',
     letterSpacing: 0.2,
   },
   emptyHint: {
     fontSize: 13,
+    fontFamily: fonts.interRegular,
     color: colors.textMuted,
     textAlign: 'center',
     lineHeight: 20,
@@ -619,7 +623,7 @@ const s = StyleSheet.create({
   },
   backText: {
     fontSize: 15,
-    fontWeight: '600',
+    fontFamily: fonts.barlowSemi,
     color: colors.accent,
     letterSpacing: 0.2,
   },
@@ -636,7 +640,7 @@ const s = StyleSheet.create({
   },
   rosterTeamName: {
   fontSize: 28,
-  fontWeight: '800',
+  fontFamily: fonts.barlowBold,
   color: colors.textPrimary,
   letterSpacing: 0.3,
   marginTop: 12,
@@ -663,7 +667,7 @@ const s = StyleSheet.create({
   },
   positionLabel: {
     fontSize: 10,
-    fontWeight: '800',
+    fontFamily: fonts.barlowBold,
     color: colors.accent,
     letterSpacing: 2,
   },
@@ -689,13 +693,14 @@ const s = StyleSheet.create({
 
 coachName: {
   fontSize: 15,
-  fontWeight: '600',
+  fontFamily: fonts.barlowSemi,
   color: colors.textPrimary,
   letterSpacing: 0.2,
 },
 
 coachMeta: {
   fontSize: 12,
+  fontFamily: fonts.interMedium,
   color: colors.textSecondary,
   letterSpacing: 0.3,
   marginTop: 3,

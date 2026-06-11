@@ -8,12 +8,29 @@ import {
   SafeAreaView,
   Pressable,
 } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
+
+function IconBack() {
+  return (
+    <Svg width={18} height={18} viewBox="0 0 20 20">
+      <Path
+        d="M13 4 L7 10 L13 16"
+        stroke={colors.textPrimary}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+    </Svg>
+  );
+}
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MatchHero } from '../../components/MatchHero';
 import { ProjectedXIToggle } from '../../components/ProjectedXIToggle';
 import { getMatchById } from '../../services/futbolApi';
 import { Match } from '../../types/match';
 import { colors } from '../../constants/colors';
+import { fonts } from '../../constants/typography';
 
 export default function MatchDetailScreen() {
   const { matchId } = useLocalSearchParams<{ matchId: string }>();
@@ -56,8 +73,8 @@ export default function MatchDetailScreen() {
     <SafeAreaView style={styles.safe}>
       <View style={styles.root}>
         <View style={styles.header}>
-          <Pressable style={styles.backBtn} onPress={() => router.back()}>
-            <Text style={styles.backArrow}>←</Text>
+          <Pressable style={styles.backBtn} onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Go back">
+            <IconBack />
           </Pressable>
         </View>
 
@@ -117,11 +134,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  backArrow: {
-    fontSize: 18,
-    color: colors.textPrimary,
-    lineHeight: 20,
-  },
   scroll: {
     flex: 1,
   },
@@ -136,12 +148,14 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 14,
+    fontFamily: fonts.interRegular,
     color: colors.liveRed,
     textAlign: 'center',
     letterSpacing: 0.3,
   },
   mutedText: {
     fontSize: 15,
+    fontFamily: fonts.interRegular,
     color: colors.textMuted,
     letterSpacing: 0.3,
   },

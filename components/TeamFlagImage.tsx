@@ -1,5 +1,7 @@
+import { useState, useEffect } from 'react';
 import { View, Text, Image, StyleSheet } from 'react-native';
 import { colors } from '../constants/colors';
+import { fonts } from '../constants/typography';
 
 interface TeamFlagImageProps {
   flagUrl: string | null;
@@ -15,14 +17,21 @@ interface TeamFlagImageProps {
  * (match detail) so the flag presentation is identical everywhere.
  */
 export function TeamFlagImage({ flagUrl, width = 64, height = 40 }: TeamFlagImageProps) {
+  const [loadError, setLoadError] = useState(false);
+
+  useEffect(() => {
+    setLoadError(false);
+  }, [flagUrl]);
+
   const box = { width, height };
 
-  if (flagUrl !== null) {
+  if (flagUrl !== null && !loadError) {
     return (
       <Image
         source={{ uri: flagUrl }}
         style={[styles.flag, box]}
         resizeMode="cover"
+        onError={() => setLoadError(true)}
       />
     );
   }
@@ -51,6 +60,6 @@ const styles = StyleSheet.create({
   placeholderText: {
     fontSize: 14,
     color: colors.textMuted,
-    fontWeight: '600',
+    fontFamily: fonts.interSemi,
   },
 });
