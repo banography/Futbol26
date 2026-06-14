@@ -35,7 +35,7 @@ export function MatchHero({ match }: MatchHeroProps) {
                 <Text style={styles.scoreSep}>–</Text>
                 <Text style={styles.scoreNum}>{match.score!.teamB}</Text>
               </View>
-              {isFinal && <Text style={styles.ftLabel}>Full Time</Text>}
+              {/* {isFinal && <Text style={styles.ftLabel}>Full Time</Text>} */}
             </>
           ) : (
             <>

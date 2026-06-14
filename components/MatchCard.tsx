@@ -4,29 +4,46 @@ import { TeamFlagImage } from './TeamFlagImage';
 import { colors } from '../constants/colors';
 import { fonts } from '../constants/typography';
 
+// Compact display names for match cards only.
+// Source data is never mutated; Match Detail always uses the full official name.
+const CARD_ABBREV: Record<string, string> = {
+  'Bosnia and Herzegovina':            'Bosnia & Herz.',
+  'Bosnia & Herzegovina':              'Bosnia & Herz.',
+  'Congo DR':                          'DR Congo',
+  'Democratic Republic of the Congo':  'DR Congo',
+  'Trinidad and Tobago':               'Trinidad & Tob.',
+  'Saint Kitts and Nevis':             'St. Kitts & Nevis',
+  'Antigua and Barbuda':               'Antigua & Barb.',
+};
+
+function cardName(name: string): string {
+  return CARD_ABBREV[name] ?? name;
+}
+
 interface MatchCardProps {
   match: Match;
   onPress: (match: Match) => void;
 }
 
 export function MatchCard({ match, onPress }: MatchCardProps) {
-  const isFinal = match.status === 'final';
+  const isFinal  = match.status === 'final';
+  // Live only when data explicitly says so — never inferred from kickoff time.
+  const isLive   = match.status === 'live';
+  const hasScore = match.score !== null;
 
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
       onPress={() => onPress(match)}
     >
-      {/* Top row */}
+      {/* Top row: group pill (+ time for scheduled/live) */}
       <View style={styles.topRow}>
         {isFinal ? (
-          <>
-            {match.group !== '' && (
-              <View style={styles.groupPill}>
-                <Text style={styles.groupPillText}>GROUP {match.group}</Text>
-              </View>
-            )}
-          </>
+          match.group !== '' && (
+            <View style={styles.groupPill}>
+              <Text style={styles.groupPillText}>GROUP {match.group}</Text>
+            </View>
+          )
         ) : (
           <>
             <Text style={styles.time}>{match.time}</Text>
@@ -44,56 +61,44 @@ export function MatchCard({ match, onPress }: MatchCardProps) {
         {match.venue}  ·  {match.city}
       </Text>
 
-      {/* Teams — final: score below each flag; upcoming/live: VS + centered score row */}
-      {isFinal ? (
-        <View style={styles.teamsRow}>
-          <View style={styles.teamBlock}>
-            <TeamFlagImage flagUrl={match.teamA.flagUrl} width={80} height={50} />
-            <Text style={styles.teamName} numberOfLines={1} ellipsizeMode="tail">
-              {match.teamA.name.toUpperCase()}
-            </Text>
-            <Text style={styles.finalScore}>{match.score!.teamA}</Text>
-          </View>
-          <Text style={styles.vs}>–</Text>
-          <View style={styles.teamBlock}>
-            <TeamFlagImage flagUrl={match.teamB.flagUrl} width={80} height={50} />
-            <Text style={styles.teamName} numberOfLines={1} ellipsizeMode="tail">
-              {match.teamB.name.toUpperCase()}
-            </Text>
-            <Text style={styles.finalScore}>{match.score!.teamB}</Text>
-          </View>
+      {/* Teams row */}
+      <View style={styles.teamsRow}>
+        <View style={styles.teamBlock}>
+          <TeamFlagImage flagUrl={match.teamA.flagUrl} width={80} height={50} />
+          <Text style={styles.teamName} numberOfLines={2} ellipsizeMode="tail">
+            {cardName(match.teamA.name).toUpperCase()}
+          </Text>
+          {/* Final: score sits under each team name */}
+          {isFinal && <Text style={styles.finalScore}>{match.score!.teamA}</Text>}
         </View>
-      ) : (
-        <>
-          <View style={styles.teamsRow}>
-            <View style={styles.teamBlock}>
-              <TeamFlagImage flagUrl={match.teamA.flagUrl} width={80} height={50} />
-              <Text style={styles.teamName} numberOfLines={1} ellipsizeMode="tail">
-                {match.teamA.name.toUpperCase()}
-              </Text>
-            </View>
-            <Text style={styles.vs}>VS</Text>
-            <View style={styles.teamBlock}>
-              <TeamFlagImage flagUrl={match.teamB.flagUrl} width={80} height={50} />
-              <Text style={styles.teamName} numberOfLines={1} ellipsizeMode="tail">
-                {match.teamB.name.toUpperCase()}
-              </Text>
+
+        {/* Center column — changes per status */}
+        {isFinal ? (
+          // Final: plain dash between scores
+          <Text style={styles.centerDash}>–</Text>
+        ) : isLive && hasScore ? (
+          // Live (explicit): score stacked above LIVE badge
+          <View style={styles.liveCenter}>
+            <Text style={styles.liveScore}>
+              {match.score!.teamA} – {match.score!.teamB}
+            </Text>
+            <View style={styles.liveBadge}>
+              <Text style={styles.liveBadgeText}>LIVE</Text>
             </View>
           </View>
-          {match.score !== null && (
-            <View style={styles.scoreRow}>
-              <Text style={styles.scoreText}>
-                {match.score.teamA}  –  {match.score.teamB}
-              </Text>
-              {match.status === 'live' && (
-                <View style={styles.liveBadge}>
-                  <Text style={styles.liveBadgeText}>LIVE</Text>
-                </View>
-              )}
-            </View>
-          )}
-        </>
-      )}
+        ) : (
+          // Scheduled (or live without score yet)
+          <Text style={styles.vs}>VS</Text>
+        )}
+
+        <View style={styles.teamBlock}>
+          <TeamFlagImage flagUrl={match.teamB.flagUrl} width={80} height={50} />
+          <Text style={styles.teamName} numberOfLines={2} ellipsizeMode="tail">
+            {cardName(match.teamB.name).toUpperCase()}
+          </Text>
+          {isFinal && <Text style={styles.finalScore}>{match.score!.teamB}</Text>}
+        </View>
+      </View>
     </Pressable>
   );
 }
@@ -149,14 +154,17 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     letterSpacing: 0.2,
   },
+  venueResult: {
+    marginBottom: 16,
+  },
   teamsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 6,
   },
   teamBlock: {
     flex: 1,
+    minWidth: 0,
     alignItems: 'center',
     gap: 10,
   },
@@ -164,10 +172,25 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: fonts.barlowBold,
     color: colors.textPrimary,
-    letterSpacing: 1.5,
+    letterSpacing: 0.3,
     textAlign: 'center',
     lineHeight: 18,
   },
+  // Final center
+  centerDash: {
+    fontSize: 18,
+    fontFamily: fonts.barlowBold,
+    color: colors.textMuted,
+    paddingHorizontal: 8,
+  },
+  finalScore: {
+    fontSize: 28,
+    fontFamily: fonts.barlowBold,
+    color: colors.textPrimary,
+    letterSpacing: 2,
+    textAlign: 'center',
+  },
+  // Scheduled center
   vs: {
     fontSize: 18,
     fontFamily: fonts.barlowBold,
@@ -175,14 +198,13 @@ const styles = StyleSheet.create({
     letterSpacing: 3,
     paddingHorizontal: 8,
   },
-  scoreRow: {
-    flexDirection: 'row',
+  // Live center
+  liveCenter: {
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-    gap: 10,
+    gap: 6,
+    paddingHorizontal: 4,
   },
-  scoreText: {
+  liveScore: {
     fontSize: 26,
     fontFamily: fonts.barlowBold,
     color: colors.textPrimary,
@@ -199,21 +221,5 @@ const styles = StyleSheet.create({
     fontFamily: fonts.barlowBold,
     color: '#FFFFFF',
     letterSpacing: 1.5,
-  },
-  ftLabel: {
-    fontSize: 11,
-    fontFamily: fonts.barlowBold,
-    color: colors.textMuted,
-    letterSpacing: 1.5,
-  },
-  venueResult: {
-    marginBottom: 16,
-  },
-  finalScore: {
-    fontSize: 28,
-    fontFamily: fonts.barlowBold,
-    color: colors.textPrimary,
-    letterSpacing: 2,
-    textAlign: 'center',
   },
 });

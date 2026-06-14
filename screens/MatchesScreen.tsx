@@ -6,6 +6,7 @@ import {
   Pressable,
   Modal,
   StyleSheet,
+  TextInput,
 } from 'react-native';
 
 import type { Match as WC26Match } from '../src/data/worldCup2026Matches';
@@ -19,6 +20,19 @@ import { colors } from '../constants/colors';
 import { fonts } from '../constants/typography';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function matchesSearch(m: WC26Match, q: string): boolean {
+  const lq = q.toLowerCase();
+  return (
+    m.homeTeam.name.toLowerCase().includes(lq) ||
+    m.awayTeam.name.toLowerCase().includes(lq) ||
+    m.homeTeam.code.toLowerCase().includes(lq) ||
+    m.awayTeam.code.toLowerCase().includes(lq) ||
+    (m.group != null && (`group ${m.group}`.toLowerCase().includes(lq) || m.group.toLowerCase() === lq)) ||
+    m.venue.toLowerCase().includes(lq) ||
+    m.city.toLowerCase().includes(lq)
+  );
+}
 
 function toLocalDateStr(dateUtc: string, tz: string): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -90,22 +104,24 @@ interface MatchesScreenProps {
 }
 
 export function MatchesScreen({ onMatchPress }: MatchesScreenProps) {
-  const [viewMode, setViewMode]       = useState<ViewMode>('upcoming');
+  const [viewMode, setViewMode]         = useState<ViewMode>('upcoming');
   const [watchVisible, setWatchVisible] = useState(false);
-  const { matches, loading }           = useMatchData();
+  const [searchQuery, setSearchQuery]   = useState('');
+  const { matches, loading }            = useMatchData();
 
   const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   if (loading) return <View style={styles.root} />;
 
-  // Filter at match level so a finished match moves to Results immediately,
-  // regardless of whether other matches on the same day are still scheduled.
+  const q = searchQuery.trim();
+
+  // Filter at match level so a finished match moves to Results immediately.
   const upcomingGroups = groupByLocalDate(
-    matches.filter(m => m.status !== 'finished'),
+    matches.filter(m => m.status !== 'finished' && (!q || matchesSearch(m, q))),
     deviceTz,
   );
   const resultsGroups = groupByLocalDate(
-    matches.filter(m => m.status === 'finished'),
+    matches.filter(m => m.status === 'finished' && (!q || matchesSearch(m, q))),
     deviceTz,
   ).reverse(); // most recent day first
 
@@ -131,16 +147,35 @@ export function MatchesScreen({ onMatchPress }: MatchesScreenProps) {
         </Pressable>
       </View>
 
+      {/* Search bar */}
+      <View style={styles.searchWrap}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search team, group, city..."
+          placeholderTextColor={colors.textMuted}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          clearButtonMode="while-editing"
+          autoCorrect={false}
+          autoCapitalize="none"
+          returnKeyType="search"
+          accessibilityLabel="Search matches"
+        />
+      </View>
+
       {/* ── Upcoming tab ─────────────────────────────────────────────────────── */}
       {viewMode === 'upcoming' && (
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           {upcomingGroups.length === 0 ? (
             <View style={styles.centerBox}>
-              <Text style={styles.emptyText}>No upcoming matches</Text>
+              <Text style={styles.emptyText}>
+                {q ? `No matches for "${q}"` : 'No upcoming matches'}
+              </Text>
             </View>
           ) : (
             upcomingGroups.map((group, i) => (
@@ -148,7 +183,7 @@ export function MatchesScreen({ onMatchPress }: MatchesScreenProps) {
                 key={group.date}
                 group={group}
                 onMatchPress={onMatchPress}
-                onWatchPress={i === 0 ? () => setWatchVisible(true) : undefined}
+                onWatchPress={i === 0 && !q ? () => setWatchVisible(true) : undefined}
               />
             ))
           )}
@@ -159,13 +194,16 @@ export function MatchesScreen({ onMatchPress }: MatchesScreenProps) {
       {viewMode === 'results' && (
         resultsGroups.length === 0 ? (
           <View style={styles.centerBox}>
-            <Text style={styles.emptyText}>No results yet</Text>
+            <Text style={styles.emptyText}>
+              {q ? `No matches for "${q}"` : 'No results yet'}
+            </Text>
           </View>
         ) : (
           <ScrollView
             style={styles.scroll}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
           >
             {resultsGroups.map((group) => (
               <DateSection
@@ -201,6 +239,19 @@ const styles = StyleSheet.create({
   toggleText:       { fontSize: 15, fontFamily: fonts.barlowBold, color: colors.textMuted, letterSpacing: 0.5 },
   toggleTextActive: { color: colors.textNavy },
 
+  searchWrap:       { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 },
+  searchInput:      {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 14,
+    fontFamily: fonts.interRegular,
+    color: colors.textPrimary,
+    letterSpacing: 0.2,
+  },
   centerBox:        { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
   emptyText:        { fontSize: 14, color: colors.textMuted, letterSpacing: 0.4 },
   scroll:           { flex: 1 },

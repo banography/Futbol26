@@ -182,10 +182,24 @@ function computeR32Slots(allMatches: WC26Match[]): R32Slot[] | null {
 
 const formatGD = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 
-function dotColor(rank: number): string {
-  if (rank < 2) return colors.accent;
-  if (rank === 2) return colors.amber;
-  return colors.textMuted;
+function isFullyTied(a: GroupTeamStats, b: GroupTeamStats): boolean {
+  return a.points === b.points && a.gd === b.gd && a.gf === b.gf;
+}
+
+type QualStatus = 'advance' | 'wildcard' | 'provisional' | 'out';
+
+// Returns the honest qualification status for a team at a given rank.
+// 'provisional' means a tiebreaker between that slot and its neighbour
+// across a qualification boundary is unresolved — don't paint green/amber.
+function getQualStatus(rank: number, standings: GroupTeamStats[]): QualStatus {
+  const s = standings;
+  const tied01 = s.length >= 2 && isFullyTied(s[0]!, s[1]!);
+  const tied12 = s.length >= 3 && isFullyTied(s[1]!, s[2]!);
+  const tied23 = s.length >= 4 && isFullyTied(s[2]!, s[3]!);
+  if (rank === 0) return (tied01 && tied12) ? 'provisional' : 'advance';
+  if (rank === 1) return tied12 ? 'provisional' : 'advance';
+  if (rank === 2) return (tied12 || tied23) ? 'provisional' : 'wildcard';
+  return tied23 ? 'provisional' : 'out';
 }
 
 // ── CollapseChevron ───────────────────────────────────────────────────────────
@@ -210,13 +224,22 @@ function CollapseChevron({ expanded }: { expanded: boolean }) {
 // ── GroupStandingsCard ────────────────────────────────────────────────────────
 
 function GroupStandingsCard({ group, allMatches }: { group: typeof GROUPS[number]; allMatches: WC26Match[] }) {
-  const [expanded, setExpanded] = useState(true);
-  const matches = useMemo(
+  // Lazy initial state: expand if any match in this group has been played or is live.
+  const [expanded, setExpanded] = useState(() =>
+    allMatches.some(
+      m => m.stage === 'Group Stage' && m.group === group &&
+           (m.status === 'finished' || m.status === 'live'),
+    ),
+  );
+
+  const matches  = useMemo(
     () => allMatches.filter(m => m.stage === 'Group Stage' && m.group === group),
     [allMatches, group],
   );
   const standings = useMemo(() => computeGroupStandings(matches), [matches]);
   const anyPlayed = standings.some(t => t.played > 0);
+  const isProvisional = anyPlayed &&
+    standings.some((_, i) => getQualStatus(i, standings) === 'provisional');
 
   return (
     <View style={sc.card}>
@@ -229,6 +252,9 @@ function GroupStandingsCard({ group, allMatches }: { group: typeof GROUPS[number
         accessibilityState={{ expanded }}
       >
         <Text style={sc.groupLabel}>GROUP {group}</Text>
+        {isProvisional && expanded && (
+          <Text style={sc.provisionalChip}>Provisional</Text>
+        )}
         <CollapseChevron expanded={expanded} />
       </Pressable>
 
@@ -249,37 +275,50 @@ function GroupStandingsCard({ group, allMatches }: { group: typeof GROUPS[number
 
           <View style={sc.headerDiv} />
 
-          {standings.map((t, i) => (
-        <React.Fragment key={t.code}>
-          {i > 0 && <View style={sc.rowDiv} />}
-          <View style={[sc.row, i < 2 && sc.rowAdvances, i === 2 && sc.rowWildcard]}>
-            {/* Qualifier stripe */}
-            {i < 2 && <View style={sc.stripeGreen} />}
-            {i === 2 && <View style={sc.stripeAmber} />}
+          {standings.map((t, i) => {
+            const qs     = anyPlayed ? getQualStatus(i, standings) : null;
+            const dotBg  = qs === 'advance'  ? colors.accent
+                         : qs === 'wildcard' ? colors.amber
+                         : colors.textMuted;
+            return (
+              <React.Fragment key={t.code}>
+                {i > 0 && <View style={sc.rowDiv} />}
+                <View style={[
+                  sc.row,
+                  qs === 'advance'  && sc.rowAdvances,
+                  qs === 'wildcard' && sc.rowWildcard,
+                ]}>
+                  {qs === 'advance'  && <View style={sc.stripeGreen} />}
+                  {qs === 'wildcard' && <View style={sc.stripeAmber} />}
 
-            {/* Status dot — neutral until at least one match played */}
-            <View style={[sc.dot, { backgroundColor: anyPlayed ? dotColor(i) : colors.textMuted }]} />
+                  <View style={[sc.dot, { backgroundColor: dotBg }]} />
 
-            {/* Flag */}
-            <TeamFlagImage flagUrl={getFlagUrl(t.code)} width={22} height={14} />
+                  <TeamFlagImage flagUrl={getFlagUrl(t.code)} width={22} height={14} />
 
-            {/* Name */}
-            <Text style={sc.teamName} numberOfLines={1}>{t.name}</Text>
+                  <Text style={sc.teamName} numberOfLines={1}>{t.name}</Text>
 
-            {/* Stats */}
-            <Text style={sc.stat}>{t.played}</Text>
-            <Text style={sc.stat}>{t.wins}</Text>
-            <Text style={sc.stat}>{t.draws}</Text>
-            <Text style={sc.stat}>{t.losses}</Text>
-            <Text style={[sc.stat, sc.gdW, t.gd > 0 && sc.gdPos, t.gd < 0 && sc.gdNeg]}>
-              {formatGD(t.gd)}
-            </Text>
-            <Text style={[sc.stat, sc.ptsW, t.points > 0 && sc.ptsAccent]}>
-              {t.points}
-            </Text>
-          </View>
-        </React.Fragment>
-          ))}
+                  <Text style={sc.stat}>{t.played}</Text>
+                  <Text style={sc.stat}>{t.wins}</Text>
+                  <Text style={sc.stat}>{t.draws}</Text>
+                  <Text style={sc.stat}>{t.losses}</Text>
+                  <Text style={[sc.stat, sc.gdW, t.gd > 0 && sc.gdPos, t.gd < 0 && sc.gdNeg]}>
+                    {formatGD(t.gd)}
+                  </Text>
+                  <Text style={[sc.stat, sc.ptsW, t.points > 0 && sc.ptsAccent]}>
+                    {t.points}
+                  </Text>
+                </View>
+              </React.Fragment>
+            );
+          })}
+
+          {isProvisional && (
+            <View style={sc.provisionalNote}>
+              <Text style={sc.provisionalNoteText}>
+                * Tiebreaker unresolved — positions may change
+              </Text>
+            </View>
+          )}
         </>
       )}
     </View>
@@ -386,6 +425,31 @@ const sc = StyleSheet.create({
   gdPos:    { color: colors.accent },
   gdNeg:    { color: '#B91C1C' },
   ptsAccent: { color: colors.accent, fontFamily: fonts.interSemi },
+  provisionalChip: {
+    fontSize: 10,
+    fontFamily: fonts.barlowSemi,
+    color: colors.amber,
+    letterSpacing: 0.5,
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: colors.amber,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  provisionalNote: {
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  provisionalNoteText: {
+    fontSize: 10,
+    fontFamily: fonts.interRegular,
+    color: colors.textMuted,
+    letterSpacing: 0.2,
+    fontStyle: 'italic',
+  },
 });
 
 // ── StandingsView ─────────────────────────────────────────────────────────────
