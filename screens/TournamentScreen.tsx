@@ -78,6 +78,108 @@ function computeGroupStandings(groupMatches: WC26Match[]): GroupTeamStats[] {
   });
 }
 
+// ── Bracket seeding types ─────────────────────────────────────────────────────
+
+type SlotSource =
+  | { kind: 'winner';  group: typeof GROUPS[number] }
+  | { kind: 'runnerup'; group: typeof GROUPS[number] }
+  | { kind: 'best3rd'; rank: number };
+
+type R32Slot = { home: string | null; away: string | null };
+
+// ── Bracket seeding constants ─────────────────────────────────────────────────
+
+const GROUP_STAGE_MATCH_COUNT = 72;
+
+// Official FIFA 2026 R32 bracket (M73–M88). Winner/runner-up pairings match the
+// published FIFA schedule. Third-place slot rank order (best3rd 0–7) is sorted by
+// Pts→GD→GF→name — the official FIFA 3rd-place pool matrix for exact slot
+// assignment has not been applied; adjust rank assignments when FIFA publishes it.
+const R32_SEEDING: Array<{ home: SlotSource; away: SlotSource }> = [
+  // M73
+  { home: { kind: 'runnerup', group: 'A' }, away: { kind: 'runnerup', group: 'B' } },
+  // M74
+  { home: { kind: 'winner',   group: 'E' }, away: { kind: 'best3rd',  rank: 0   } },
+  // M75
+  { home: { kind: 'winner',   group: 'F' }, away: { kind: 'runnerup', group: 'C' } },
+  // M76
+  { home: { kind: 'winner',   group: 'C' }, away: { kind: 'runnerup', group: 'F' } },
+  // M77
+  { home: { kind: 'winner',   group: 'I' }, away: { kind: 'best3rd',  rank: 1   } },
+  // M78
+  { home: { kind: 'runnerup', group: 'E' }, away: { kind: 'runnerup', group: 'I' } },
+  // M79
+  { home: { kind: 'winner',   group: 'A' }, away: { kind: 'best3rd',  rank: 2   } },
+  // M80
+  { home: { kind: 'winner',   group: 'L' }, away: { kind: 'best3rd',  rank: 3   } },
+  // M81
+  { home: { kind: 'winner',   group: 'D' }, away: { kind: 'best3rd',  rank: 4   } },
+  // M82
+  { home: { kind: 'winner',   group: 'G' }, away: { kind: 'best3rd',  rank: 5   } },
+  // M83
+  { home: { kind: 'runnerup', group: 'K' }, away: { kind: 'runnerup', group: 'L' } },
+  // M84
+  { home: { kind: 'winner',   group: 'H' }, away: { kind: 'runnerup', group: 'J' } },
+  // M85
+  { home: { kind: 'winner',   group: 'B' }, away: { kind: 'best3rd',  rank: 6   } },
+  // M86
+  { home: { kind: 'winner',   group: 'J' }, away: { kind: 'runnerup', group: 'H' } },
+  // M87
+  { home: { kind: 'winner',   group: 'K' }, away: { kind: 'best3rd',  rank: 7   } },
+  // M88
+  { home: { kind: 'runnerup', group: 'D' }, away: { kind: 'runnerup', group: 'G' } },
+];
+
+// ── Bracket seeding helpers ───────────────────────────────────────────────────
+
+function computeAllStandings(allMatches: WC26Match[]): Map<string, GroupTeamStats[]> {
+  const result = new Map<string, GroupTeamStats[]>();
+  for (const g of GROUPS) {
+    const gm = allMatches.filter(m => m.stage === 'Group Stage' && m.group === g);
+    result.set(g, computeGroupStandings(gm));
+  }
+  return result;
+}
+
+function getBestThirdPlaceTeams(allStandings: Map<string, GroupTeamStats[]>): GroupTeamStats[] {
+  const thirds: GroupTeamStats[] = [];
+  for (const standings of allStandings.values()) {
+    if (standings[2]) thirds.push(standings[2]);
+  }
+  return thirds
+    .sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points;
+      if (b.gd     !== a.gd)     return b.gd     - a.gd;
+      if (b.gf     !== a.gf)     return b.gf     - a.gf;
+      return a.name.localeCompare(b.name);
+    })
+    .slice(0, 8);
+}
+
+function resolveSlot(
+  src: SlotSource,
+  allStandings: Map<string, GroupTeamStats[]>,
+  bestThirds: GroupTeamStats[],
+): string | null {
+  if (src.kind === 'winner')   return allStandings.get(src.group)?.[0]?.code ?? null;
+  if (src.kind === 'runnerup') return allStandings.get(src.group)?.[1]?.code ?? null;
+  return bestThirds[src.rank]?.code ?? null;
+}
+
+function computeR32Slots(allMatches: WC26Match[]): R32Slot[] | null {
+  const gs = allMatches.filter(m => m.stage === 'Group Stage');
+  if (gs.length !== GROUP_STAGE_MATCH_COUNT) return null;
+  if (!gs.every(m => m.status === 'finished' && m.homeScore !== null && m.awayScore !== null)) return null;
+
+  const allStandings = computeAllStandings(allMatches);
+  const bestThirds   = getBestThirdPlaceTeams(allStandings);
+
+  return R32_SEEDING.map(({ home, away }) => ({
+    home: resolveSlot(home, allStandings, bestThirds),
+    away: resolveSlot(away, allStandings, bestThirds),
+  }));
+}
+
 const formatGD = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 
 function dotColor(rank: number): string {
@@ -114,6 +216,7 @@ function GroupStandingsCard({ group, allMatches }: { group: typeof GROUPS[number
     [allMatches, group],
   );
   const standings = useMemo(() => computeGroupStandings(matches), [matches]);
+  const anyPlayed = standings.some(t => t.played > 0);
 
   return (
     <View style={sc.card}>
@@ -126,8 +229,16 @@ function GroupStandingsCard({ group, allMatches }: { group: typeof GROUPS[number
         accessibilityState={{ expanded }}
       >
         <Text style={sc.groupLabel}>GROUP {group}</Text>
-        {expanded && (
+        <CollapseChevron expanded={expanded} />
+      </Pressable>
+
+      {expanded && (
+        <>
+          {/* Column headers — spacers mirror data row: dot(8) + flag(22) + name(flex:1) */}
           <View style={sc.colHdrRow}>
+            <View style={{ width: 8 }} />
+            <View style={{ width: 22 }} />
+            <View style={{ flex: 1 }} />
             <Text style={sc.colHdr}>P</Text>
             <Text style={sc.colHdr}>W</Text>
             <Text style={sc.colHdr}>D</Text>
@@ -135,14 +246,7 @@ function GroupStandingsCard({ group, allMatches }: { group: typeof GROUPS[number
             <Text style={[sc.colHdr, sc.gdW]}>GD</Text>
             <Text style={[sc.colHdr, sc.ptsW]}>Pts</Text>
           </View>
-        )}
-        <View style={sc.chevronWrap}>
-          <CollapseChevron expanded={expanded} />
-        </View>
-      </Pressable>
 
-      {expanded && (
-        <>
           <View style={sc.headerDiv} />
 
           {standings.map((t, i) => (
@@ -153,8 +257,8 @@ function GroupStandingsCard({ group, allMatches }: { group: typeof GROUPS[number
             {i < 2 && <View style={sc.stripeGreen} />}
             {i === 2 && <View style={sc.stripeAmber} />}
 
-            {/* Status dot */}
-            <View style={[sc.dot, { backgroundColor: dotColor(i) }]} />
+            {/* Status dot — neutral until at least one match played */}
+            <View style={[sc.dot, { backgroundColor: anyPlayed ? dotColor(i) : colors.textMuted }]} />
 
             {/* Flag */}
             <TeamFlagImage flagUrl={getFlagUrl(t.code)} width={22} height={14} />
@@ -202,9 +306,6 @@ const sc = StyleSheet.create({
   cardHeadPressed: {
     opacity: 0.7,
   },
-  chevronWrap: {
-    marginLeft: 6,
-  },
   groupLabel: {
     flex: 1,
     fontSize: 13,
@@ -215,7 +316,10 @@ const sc = StyleSheet.create({
   colHdrRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 0,
+    paddingHorizontal: 12,
+    paddingTop: 4,
+    paddingBottom: 4,
+    gap: 6,
   },
   colHdr: {
     width: 22,
@@ -395,7 +499,7 @@ function centerY(r: number, i: number): number {
 
 // ── BracketCanvas ─────────────────────────────────────────────────────────────
 
-function BracketCanvas() {
+function BracketCanvas({ r32Slots }: { r32Slots: R32Slot[] | null }) {
   const nodes: React.ReactElement[] = [];
 
   ROUNDS.forEach((round, r) => {
@@ -427,6 +531,9 @@ function BracketCanvas() {
     for (let i = 0; i < round.count; i++) {
       const cy  = centerY(r, i);
       const top = cy - MATCHUP_H / 2;
+      const slot      = r === 0 ? (r32Slots != null ? (r32Slots[i] ?? null) : null) : null;
+      const homeLabel: string = slot?.home != null ? slot.home : 'TBD';
+      const awayLabel: string = slot?.away != null ? slot.away : 'TBD';
 
       // ── Matchup pill (two team rows + 1px divider)
       nodes.push(
@@ -446,11 +553,11 @@ function BracketCanvas() {
           }}
         >
           <View style={bs.teamRow}>
-            <Text style={bs.tbd}>TBD</Text>
+            <Text style={homeLabel !== 'TBD' ? bs.teamCode : bs.tbd}>{homeLabel}</Text>
           </View>
           <View style={bs.divider} />
           <View style={bs.teamRow}>
-            <Text style={bs.tbd}>TBD</Text>
+            <Text style={awayLabel !== 'TBD' ? bs.teamCode : bs.tbd}>{awayLabel}</Text>
           </View>
         </View>,
       );
@@ -547,6 +654,12 @@ const bs = StyleSheet.create({
     height: 1,
     backgroundColor: colors.divider,
   },
+  teamCode: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    letterSpacing: 0.5,
+  },
 });
 
 // ── TournamentScreen ──────────────────────────────────────────────────────────
@@ -554,6 +667,7 @@ const bs = StyleSheet.create({
 export function TournamentScreen() {
   const [segment, setSegment] = useState<Segment>('standings');
   const { matches } = useMatchData();
+  const r32Slots = useMemo(() => computeR32Slots(matches), [matches]);
 
   return (
     <View style={styles.root}>
@@ -593,9 +707,11 @@ export function TournamentScreen() {
           showsVerticalScrollIndicator={false}
           bounces
         >
-          <Text style={styles.bracketNote}>
-            Knockout bracket will populate after group stage results are finalized.
-          </Text>
+          {!r32Slots && (
+            <Text style={styles.bracketNote}>
+              Knockout bracket will populate after the group stage is complete.
+            </Text>
+          )}
 
           {/* Horizontal scroll: lets user pan left/right through rounds */}
           <ScrollView
@@ -605,7 +721,7 @@ export function TournamentScreen() {
             contentContainerStyle={styles.bracketPadding}
             decelerationRate="normal"
           >
-            <BracketCanvas />
+            <BracketCanvas r32Slots={r32Slots} />
           </ScrollView>
         </ScrollView>
       )}

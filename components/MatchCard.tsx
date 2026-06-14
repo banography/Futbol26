@@ -26,8 +26,6 @@ export function MatchCard({ match, onPress }: MatchCardProps) {
                 <Text style={styles.groupPillText}>GROUP {match.group}</Text>
               </View>
             )}
-            <View style={{ flex: 1 }} />
-            <Text style={styles.ftLabel}>FT</Text>
           </>
         ) : (
           <>

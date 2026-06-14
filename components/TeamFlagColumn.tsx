@@ -8,16 +8,15 @@ interface TeamFlagColumnProps {
 }
 
 export function TeamFlagColumn({ team }: TeamFlagColumnProps) {
-  const probLabel =
-    team.winProbability !== null
-      ? `${Math.round(team.winProbability * 100)}%`
-      : 'TBD';
+  const probLabel = team.winProbability !== null
+    ? `${Math.round(team.winProbability * 100)}%`
+    : null;
 
   return (
     <View style={styles.container}>
       <TeamFlagImage flagUrl={team.flagUrl} width={96} height={60} />
       <Text style={styles.name}>{team.name}</Text>
-      <Text style={styles.prob}>{probLabel}</Text>
+      {probLabel !== null && <Text style={styles.prob}>{probLabel}</Text>}
     </View>
   );
 }

@@ -1,10 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
-  FlatList,
-  Modal,
   Pressable,
   ScrollView,
   Share,
@@ -14,22 +12,19 @@ import {
   View,
 } from 'react-native';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
+import { captureRef } from 'react-native-view-shot';
+import * as Sharing from 'expo-sharing';
 import { colors } from '../constants/colors';
 import { fonts } from '../constants/typography';
 import { TeamFlagImage } from '../components/TeamFlagImage';
 import { getFlagUrl } from '../services/futbolApi';
-import { getAllTeams } from '../src/data/worldCup2026Squads';
 import { WC26_MATCHES } from '../src/data/worldCup2026Matches';
 import type { Match as WC26Match } from '../src/data/worldCup2026Matches';
+import { formatMatchTime, formatMatchDate } from '../src/utils/formatMatchTime';
 import {
-  type Bracket,
-  type BracketPicks,
-  type MatchupPick,
-  type TeamEntry,
-  emptyBracket,
-  loadBracket,
-  saveBracket,
-} from '../services/bracketStorage';
+  loadDailyPredictions, saveDailyPredictions, emptyPrediction,
+} from '../services/dailyPredictionsService';
+import type { DailyPredictions, DailyOutcome } from '../services/dailyPredictionsService';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -37,13 +32,14 @@ const SCREEN_W  = Dimensions.get('window').width;
 const COL_GAP   = 8;
 const H_PAD     = 16;
 const CARD_W    = (SCREEN_W - H_PAD * 2 - COL_GAP) / 2;
+const TZ        = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 const GROUPS          = ['A','B','C','D','E','F','G','H','I','J','K','L'] as const;
 const GROUP_PICKS_KEY = 'bracket_group_picks';
 const KNOCKOUT_KEY    = 'bracket_knockout_picks';
 
-type RoundKey    = 'r16' | 'qf' | 'sf' | 'fin';
-type SubTab      = 'group-picks' | 'standings' | 'knockout' | 'summary';
+type SubTab       = 'today' | 'bracket' | 'share';
+type BracketSection = 'groups' | 'knockout';
 type MatchOutcome = 'home' | 'draw' | 'away';
 type GroupPicks   = Record<string, MatchOutcome>;
 
@@ -103,140 +99,61 @@ function getGroupMatches(group: string): WC26Match[] {
 
 function computeStandings(groupMatches: WC26Match[], picks: GroupPicks): TeamStats[] {
   const teams = new Map<string, TeamStats>();
-
   for (const m of groupMatches) {
     for (const t of [m.homeTeam, m.awayTeam]) {
       if (!teams.has(t.code)) {
-        teams.set(t.code, {
-          code: t.code, name: t.name,
-          played: 0, wins: 0, draws: 0, losses: 0, points: 0,
-        });
+        teams.set(t.code, { code: t.code, name: t.name, played: 0, wins: 0, draws: 0, losses: 0, points: 0 });
       }
     }
   }
-
   for (const m of groupMatches) {
     const outcome = picks[m.id];
     if (!outcome) continue;
     const home = teams.get(m.homeTeam.code)!;
     const away = teams.get(m.awayTeam.code)!;
-    home.played++;
-    away.played++;
+    home.played++; away.played++;
     if (outcome === 'home') {
-      home.wins++;  home.points += 3;
-      away.losses++;
+      home.wins++; home.points += 3; away.losses++;
     } else if (outcome === 'draw') {
-      home.draws++;  home.points += 1;
-      away.draws++;  away.points += 1;
+      home.draws++; home.points += 1; away.draws++; away.points += 1;
     } else {
-      away.wins++;  away.points += 3;
-      home.losses++;
+      away.wins++; away.points += 3; home.losses++;
     }
   }
-
   return Array.from(teams.values()).sort((a, b) =>
     b.points !== a.points ? b.points - a.points : a.name.localeCompare(b.name),
   );
 }
 
-// ── Bracket mutation helpers ──────────────────────────────────────────────────
+// ── Today helpers ─────────────────────────────────────────────────────────────
 
-function clonePicks(picks: BracketPicks): BracketPicks {
-  return JSON.parse(JSON.stringify(picks)) as BracketPicks;
+function getLocalDateStr(dateUtc: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(dateUtc));
 }
 
-function cascadeFromR16(p: BracketPicks, mIdx: number): BracketPicks {
-  const qfIdx = Math.floor(mIdx / 2);
-  const qfSlot: 'top' | 'bot' = mIdx % 2 === 0 ? 'top' : 'bot';
-  p.qf[qfIdx][qfSlot] = null;
-  p.qf[qfIdx].winner  = null;
-  return cascadeFromQF(p, qfIdx);
+function getTodayOrNextMatchday(): { matches: WC26Match[]; label: string } {
+  const todayStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+  const todayMatches = WC26_MATCHES.filter(m => getLocalDateStr(m.dateUtc) === todayStr);
+  if (todayMatches.length > 0) return { matches: todayMatches, label: "Today's Matches" };
+
+  const now = Date.now();
+  const upcoming = WC26_MATCHES
+    .filter(m => new Date(m.dateUtc).getTime() > now)
+    .sort((a, b) => a.dateUtc.localeCompare(b.dateUtc));
+  if (upcoming.length === 0) return { matches: [], label: 'No Upcoming Matches' };
+
+  const nextDate = getLocalDateStr(upcoming[0]!.dateUtc);
+  return {
+    matches: upcoming.filter(m => getLocalDateStr(m.dateUtc) === nextDate),
+    label:   `Next Matches · ${formatMatchDate(upcoming[0]!.dateUtc, TZ)}`,
+  };
 }
 
-function cascadeFromQF(p: BracketPicks, qfIdx: number): BracketPicks {
-  const sfIdx = Math.floor(qfIdx / 2);
-  const sfSlot: 'top' | 'bot' = qfIdx % 2 === 0 ? 'top' : 'bot';
-  p.sf[sfIdx][sfSlot] = null;
-  p.sf[sfIdx].winner  = null;
-  return cascadeFromSF(p, sfIdx);
-}
-
-function cascadeFromSF(p: BracketPicks, sfIdx: number): BracketPicks {
-  const finSlot: 'top' | 'bot' = sfIdx % 2 === 0 ? 'top' : 'bot';
-  p.fin[0][finSlot]  = null;
-  p.fin[0].winner    = null;
-  p.champion         = null;
-  return p;
-}
-
-function setR16Slot(
-  picks: BracketPicks, mIdx: number, slot: 'top' | 'bot', team: TeamEntry | null,
-): BracketPicks {
-  const next = clonePicks(picks);
-  next.r16[mIdx][slot]  = team;
-  next.r16[mIdx].winner = null;
-  return cascadeFromR16(next, mIdx);
-}
-
-function advanceWinner(
-  picks: BracketPicks, round: RoundKey, mIdx: number, winner: TeamEntry,
-): BracketPicks {
-  const next = clonePicks(picks);
-  next[round][mIdx].winner = winner;
-
-  if (round === 'r16') {
-    const qfIdx  = Math.floor(mIdx / 2);
-    const qfSlot: 'top' | 'bot' = mIdx % 2 === 0 ? 'top' : 'bot';
-    next.qf[qfIdx][qfSlot] = winner;
-    next.qf[qfIdx].winner  = null;
-    return cascadeFromQF(next, qfIdx);
-  }
-  if (round === 'qf') {
-    const sfIdx:  number           = Math.floor(mIdx / 2);
-    const sfSlot: 'top' | 'bot'   = mIdx % 2 === 0 ? 'top' : 'bot';
-    next.sf[sfIdx][sfSlot] = winner;
-    next.sf[sfIdx].winner  = null;
-    return cascadeFromSF(next, sfIdx);
-  }
-  if (round === 'sf') {
-    const finSlot: 'top' | 'bot' = mIdx % 2 === 0 ? 'top' : 'bot';
-    next.fin[0][finSlot] = winner;
-    next.fin[0].winner   = null;
-    next.champion        = null;
-    return next;
-  }
-  if (round === 'fin') {
-    next.champion = winner;
-    return next;
-  }
-  return next;
-}
-
-// ── Share text ────────────────────────────────────────────────────────────────
-
-function buildShareText(b: Bracket): string {
-  const p   = b.picks;
-  const fmt = (m: MatchupPick) => m.winner?.name ?? '(TBD)';
-  const lines: string[] = ['My 2026 World Cup Bracket', ''];
-  lines.push('ROUND OF 16');
-  p.r16.forEach((m, i) => lines.push(`  Match ${i + 1}: ${fmt(m)}`));
-  lines.push('', 'QUARTERFINALS');
-  p.qf.forEach((m, i) => lines.push(`  Match ${i + 1}: ${fmt(m)}`));
-  lines.push('', 'SEMIFINALS');
-  p.sf.forEach((m, i) => lines.push(`  Match ${i + 1}: ${fmt(m)}`));
-  lines.push('', `FINAL: ${fmt(p.fin[0])}`);
-  if (p.champion) lines.push('', `CHAMPION: ${p.champion.name}`);
-  lines.push('', 'Built with FUTBOL26');
-  return lines.join('\n');
-}
-
-function formatLockDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
-  });
-}
-
-// ── SVG Icons ─────────────────────────────────────────────────────────────────
+// ── SVG icons ─────────────────────────────────────────────────────────────────
 
 function TrophySVG() {
   return (
@@ -257,20 +174,34 @@ function CheckIcon() {
   );
 }
 
-function LockSVG({ size = 13 }: { size?: number }) {
+function LockSVG({ size = 13, color = colors.textSecondary }: { size?: number; color?: string }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path d="M7 11V7a5 5 0 0110 0v4" stroke={colors.textSecondary} strokeWidth={1.8} strokeLinecap="round" />
-      <Rect x={3} y={11} width={18} height={11} rx={3} stroke={colors.textSecondary} strokeWidth={1.8} fill={colors.divider} />
-      <Circle cx={12} cy={17} r={1.5} fill={colors.textSecondary} />
+      <Path d="M7 11V7a5 5 0 0110 0v4" stroke={color} strokeWidth={1.8} strokeLinecap="round" />
+      <Rect x={3} y={11} width={18} height={11} rx={3} stroke={color} strokeWidth={1.8} fill={colors.divider} />
+      <Circle cx={12} cy={17} r={1.5} fill={color} />
     </Svg>
   );
 }
 
-function ShareSVG() {
+function ShareSVG({ color = colors.accent }: { color?: string }) {
   return (
     <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
-      <Path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" stroke={colors.accent} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+function ChevronSVG({ open }: { open: boolean }) {
+  return (
+    <Svg width={14} height={14} viewBox="0 0 24 24" fill="none">
+      <Path
+        d={open ? 'M18 15 L12 9 L6 15' : 'M6 9 L12 15 L18 9'}
+        stroke={colors.textMuted}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </Svg>
   );
 }
@@ -278,10 +209,9 @@ function ShareSVG() {
 // ── Sub-tab bar ───────────────────────────────────────────────────────────────
 
 const SUB_TABS: { id: SubTab; label: string }[] = [
-  { id: 'group-picks', label: 'My Picks' },
-  { id: 'standings',   label: 'My Standings'   },
-  { id: 'knockout',    label: 'My Knockout'    },
-  { id: 'summary',     label: 'My Summary'     },
+  { id: 'today',   label: 'Today'   },
+  { id: 'bracket', label: 'Bracket' },
+  { id: 'share',   label: 'Share'   },
 ];
 
 function SubTabBar({ active, onPress }: { active: SubTab; onPress: (t: SubTab) => void }) {
@@ -318,12 +248,7 @@ const stb = StyleSheet.create({
 function ResetButton({ onPress }: { onPress: () => void }) {
   return (
     <View style={rb.wrap}>
-      <Pressable
-        style={({ pressed }) => [rb.btn, pressed && rb.pressed]}
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel="Reset group picks"
-      >
+      <Pressable style={({ pressed }) => [rb.btn, pressed && rb.pressed]} onPress={onPress} accessibilityRole="button">
         <Text style={rb.text}>Reset Picks</Text>
       </Pressable>
     </View>
@@ -337,13 +262,266 @@ const rb = StyleSheet.create({
   text:    { fontSize: 13, fontFamily: fonts.barlowSemi, color: colors.textSecondary, letterSpacing: 0.3 },
 });
 
+// ── TodayMatchCard ────────────────────────────────────────────────────────────
+
+function TodayMatchCard({
+  match, prediction, locked, onOutcome, onScoreChange, onNoteChange,
+}: {
+  match: WC26Match;
+  prediction: DailyPredictions[string] | undefined;
+  locked: boolean;
+  onOutcome: (outcome: DailyOutcome) => void;
+  onScoreChange: (field: 'predictedHomeScore' | 'predictedAwayScore', value: string) => void;
+  onNoteChange: (field: 'scorerNote' | 'userNote', value: string) => void;
+}) {
+  const outcome    = prediction?.outcome ?? null;
+  const homeScore  = prediction?.predictedHomeScore;
+  const awayScore  = prediction?.predictedAwayScore;
+  const scorerNote = prediction?.scorerNote ?? '';
+  const userNote   = prediction?.userNote ?? '';
+
+  const hasDetails = homeScore != null || awayScore != null || !!scorerNote || !!userNote;
+  const [showDetails, setShowDetails] = useState(false);
+  const detailsOpen = showDetails || hasDetails || locked;
+
+  const stageLabel = match.group ? `GROUP ${match.group} · M${match.matchNumber}` : `M${match.matchNumber}`;
+  const kickoff    = formatMatchTime(match.dateUtc, TZ);
+
+  return (
+    <View style={tmc.card}>
+      {/* Header */}
+      <View style={tmc.cardHeader}>
+        <Text style={tmc.stageLabel}>{stageLabel}</Text>
+        <View style={tmc.headerRight}>
+          {locked && <LockSVG size={12} color={colors.textMuted} />}
+          <Text style={tmc.time}>{kickoff}</Text>
+        </View>
+      </View>
+
+      {/* Venue */}
+      {!!(match.venue || match.city) && (
+        <Text style={tmc.venue} numberOfLines={1}>{[match.venue, match.city].filter(Boolean).join(', ')}</Text>
+      )}
+
+      {/* Teams */}
+      <View style={tmc.teamsRow}>
+        <View style={tmc.teamSide}>
+          <TeamFlagImage flagUrl={getFlagUrl(match.homeTeam.code)} width={26} height={17} />
+          <Text style={tmc.teamName} numberOfLines={1}>{match.homeTeam.name}</Text>
+        </View>
+        <Text style={tmc.vsText}>vs</Text>
+        <View style={[tmc.teamSide, tmc.teamSideRight]}>
+          <Text style={[tmc.teamName, tmc.teamNameRight]} numberOfLines={1}>{match.awayTeam.name}</Text>
+          <TeamFlagImage flagUrl={getFlagUrl(match.awayTeam.code)} width={26} height={17} />
+        </View>
+      </View>
+
+      {/* Pick buttons */}
+      <View style={tmc.pickRow}>
+        {(['home', 'draw', 'away'] as const).map(o => (
+          <Pressable
+            key={o}
+            style={[tmc.pickBtn, outcome === o && tmc.pickBtnSelected, locked && tmc.pickBtnDisabled]}
+            onPress={() => !locked && onOutcome(o)}
+            disabled={locked}
+            accessibilityRole="button"
+            accessibilityState={{ selected: outcome === o, disabled: locked }}
+          >
+            <Text style={[tmc.pickBtnText, outcome === o && tmc.pickBtnTextSelected]}>
+              {o === 'home' ? match.homeTeam.code : o === 'away' ? match.awayTeam.code : 'Draw'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {/* Details toggle */}
+      <Pressable
+        style={tmc.detailsToggle}
+        onPress={() => setShowDetails(prev => !prev)}
+        accessibilityRole="button"
+        accessibilityLabel={detailsOpen ? 'Hide details' : 'Add score and notes'}
+      >
+        <Text style={tmc.detailsToggleText}>{detailsOpen ? 'Hide details' : 'Score & notes'}</Text>
+        <ChevronSVG open={detailsOpen} />
+      </Pressable>
+
+      {/* Collapsible details */}
+      {detailsOpen && (
+        <View style={tmc.details}>
+          <View style={tmc.detailRow}>
+            <Text style={tmc.detailLabel}>Score</Text>
+            <TextInput
+              style={[tmc.scoreInput, locked && tmc.inputLocked]}
+              value={homeScore != null ? String(homeScore) : ''}
+              onChangeText={v => onScoreChange('predictedHomeScore', v)}
+              keyboardType="number-pad"
+              maxLength={2}
+              placeholder="—"
+              placeholderTextColor={colors.textMuted}
+              editable={!locked}
+              accessibilityLabel="Home predicted score"
+            />
+            <Text style={tmc.scoreDash}>–</Text>
+            <TextInput
+              style={[tmc.scoreInput, locked && tmc.inputLocked]}
+              value={awayScore != null ? String(awayScore) : ''}
+              onChangeText={v => onScoreChange('predictedAwayScore', v)}
+              keyboardType="number-pad"
+              maxLength={2}
+              placeholder="—"
+              placeholderTextColor={colors.textMuted}
+              editable={!locked}
+              accessibilityLabel="Away predicted score"
+            />
+          </View>
+          <View style={tmc.detailRow}>
+            <Text style={tmc.detailLabel}>Scorer note</Text>
+            <TextInput
+              style={[tmc.noteInput, locked && tmc.inputLocked]}
+              value={scorerNote}
+              onChangeText={v => onNoteChange('scorerNote', v)}
+              placeholder="Who scores?"
+              placeholderTextColor={colors.textMuted}
+              editable={!locked}
+              maxLength={80}
+              returnKeyType="done"
+              accessibilityLabel="Scorer note"
+            />
+          </View>
+          <View style={[tmc.detailRow, tmc.detailRowLast]}>
+            <Text style={tmc.detailLabel}>Note</Text>
+            <TextInput
+              style={[tmc.noteInput, locked && tmc.inputLocked]}
+              value={userNote}
+              onChangeText={v => onNoteChange('userNote', v)}
+              placeholder="Your note..."
+              placeholderTextColor={colors.textMuted}
+              editable={!locked}
+              maxLength={120}
+              returnKeyType="done"
+              accessibilityLabel="Your note"
+            />
+          </View>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const tmc = StyleSheet.create({
+  card:              { backgroundColor: colors.card, borderRadius: 14, borderWidth: 1, borderColor: colors.cardBorder, marginHorizontal: H_PAD, marginBottom: 12, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3, elevation: 1 },
+  cardHeader:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingTop: 12, paddingBottom: 4 },
+  stageLabel:        { fontSize: 11, fontFamily: fonts.barlowBold, color: colors.textNavy, letterSpacing: 1.2 },
+  headerRight:       { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  time:              { fontSize: 12, fontFamily: fonts.interMedium, color: colors.textMuted, letterSpacing: 0.2 },
+  venue:             { fontSize: 11, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.2, paddingHorizontal: 14, marginBottom: 10 },
+  teamsRow:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, marginBottom: 12, gap: 6 },
+  teamSide:          { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  teamSideRight:     { justifyContent: 'flex-end' },
+  teamName:          { flex: 1, fontSize: 13, fontFamily: fonts.interSemi, color: colors.textPrimary, letterSpacing: 0.1 },
+  teamNameRight:     { textAlign: 'right' },
+  vsText:            { fontSize: 11, fontFamily: fonts.barlowBold, color: colors.textMuted },
+  pickRow:           { flexDirection: 'row', gap: 6, paddingHorizontal: 14, marginBottom: 0 },
+  pickBtn:           { flex: 1, paddingVertical: 9, borderRadius: 9, alignItems: 'center', backgroundColor: colors.neutralUnselected, borderWidth: 1, borderColor: colors.neutralBorder },
+  pickBtnSelected:   { backgroundColor: colors.neutralSelected, borderColor: colors.neutralSelected },
+  pickBtnDisabled:   { opacity: 0.45 },
+  pickBtnText:       { fontSize: 11, fontFamily: fonts.barlowSemi, color: colors.neutralText, letterSpacing: 0.5 },
+  pickBtnTextSelected: { color: '#FFFFFF' },
+  detailsToggle:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 10 },
+  detailsToggleText: { fontSize: 12, fontFamily: fonts.barlowSemi, color: colors.textMuted, letterSpacing: 0.4 },
+  details:           { borderTopWidth: 1, borderTopColor: colors.divider, paddingTop: 10 },
+  detailRow:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, marginBottom: 8, gap: 8 },
+  detailRowLast:     { marginBottom: 14 },
+  detailLabel:       { fontSize: 11, fontFamily: fonts.barlowBold, color: colors.textMuted, letterSpacing: 0.5, width: 72 },
+  scoreInput:        { width: 44, height: 34, borderRadius: 8, borderWidth: 1, borderColor: colors.cardBorder, backgroundColor: colors.background, textAlign: 'center', fontSize: 15, fontFamily: fonts.barlowBold, color: colors.textPrimary },
+  scoreDash:         { fontSize: 15, fontFamily: fonts.barlowBold, color: colors.textMuted },
+  noteInput:         { flex: 1, height: 34, borderRadius: 8, borderWidth: 1, borderColor: colors.cardBorder, backgroundColor: colors.background, paddingHorizontal: 10, fontSize: 13, fontFamily: fonts.interRegular, color: colors.textPrimary },
+  inputLocked:       { opacity: 0.4 },
+});
+
+// ── TodayTab ──────────────────────────────────────────────────────────────────
+
+function TodayTab({
+  dailyPredictions, onOutcome, onScoreChange, onNoteChange, onLockToggle,
+}: {
+  dailyPredictions: DailyPredictions;
+  onOutcome: (matchId: string, outcome: DailyOutcome) => void;
+  onScoreChange: (matchId: string, field: 'predictedHomeScore' | 'predictedAwayScore', value: string) => void;
+  onNoteChange: (matchId: string, field: 'scorerNote' | 'userNote', value: string) => void;
+  onLockToggle: (matchIds: string[], lock: boolean) => void;
+}) {
+  const { matches, label } = useMemo(getTodayOrNextMatchday, []);
+  const matchIds      = matches.map(m => m.id);
+  const isTodayLocked = matchIds.length > 0 && matchIds.some(id => dailyPredictions[id]?.lockedAt != null);
+
+  if (matches.length === 0) {
+    return (
+      <View style={tdt.emptyWrap}>
+        <TrophySVG />
+        <Text style={tdt.emptyTitle}>No matches scheduled</Text>
+        <Text style={tdt.emptySub}>Check back closer to the tournament</Text>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView style={tdt.scroll} contentContainerStyle={tdt.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      <View style={tdt.header}>
+        <Text style={tdt.headerLabel}>{label}</Text>
+        <Pressable
+          style={({ pressed }) => [tdt.lockBtn, isTodayLocked && tdt.lockBtnLocked, pressed && tdt.lockBtnPressed]}
+          onPress={() => onLockToggle(matchIds, !isTodayLocked)}
+          accessibilityRole="button"
+          accessibilityLabel={isTodayLocked ? 'Unlock / Edit picks' : 'Lock picks'}
+        >
+          <LockSVG size={12} color={isTodayLocked ? '#FFFFFF' : colors.textSecondary} />
+          <Text style={[tdt.lockBtnText, isTodayLocked && tdt.lockBtnTextLocked]}>
+            {isTodayLocked ? 'Unlock / Edit' : 'Lock Picks'}
+          </Text>
+        </Pressable>
+      </View>
+
+      {matches.map(m => (
+        <TodayMatchCard
+          key={m.id}
+          match={m}
+          prediction={dailyPredictions[m.id]}
+          locked={isTodayLocked}
+          onOutcome={outcome => onOutcome(m.id, outcome)}
+          onScoreChange={(field, val) => onScoreChange(m.id, field, val)}
+          onNoteChange={(field, val) => onNoteChange(m.id, field, val)}
+        />
+      ))}
+
+      <Text style={tdt.hint}>Make your picks, lock them in, and share with friends.</Text>
+    </ScrollView>
+  );
+}
+
+const tdt = StyleSheet.create({
+  scroll:           { flex: 1 },
+  content:          { paddingTop: 12, paddingBottom: 32 },
+  header:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: H_PAD, marginBottom: 12 },
+  headerLabel:      { fontSize: 13, fontFamily: fonts.barlowBold, color: colors.textNavy, letterSpacing: 0.8 },
+  lockBtn:          { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 7, paddingHorizontal: 12, borderRadius: 8, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.cardBorder },
+  lockBtnLocked:    { backgroundColor: colors.neutralSelected, borderColor: colors.neutralSelected },
+  lockBtnPressed:   { opacity: 0.7 },
+  lockBtnText:      { fontSize: 12, fontFamily: fonts.barlowSemi, color: colors.textSecondary, letterSpacing: 0.3 },
+  lockBtnTextLocked:{ color: '#FFFFFF' },
+  hint:             { textAlign: 'center', fontSize: 12, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.2, marginHorizontal: H_PAD, marginTop: 8 },
+  emptyWrap:        { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40, gap: 12 },
+  emptyTitle:       { fontSize: 20, fontFamily: fonts.barlowBold, color: colors.textPrimary, textAlign: 'center', letterSpacing: 0.2 },
+  emptySub:         { fontSize: 13, fontFamily: fonts.interRegular, color: colors.textMuted, textAlign: 'center', lineHeight: 18, letterSpacing: 0.2 },
+});
+
 // ── MatchPickRow ──────────────────────────────────────────────────────────────
 
 function MatchPickRow({
-  match, pick, onPick,
+  match, pick, locked, onPick,
 }: {
   match: WC26Match;
   pick: MatchOutcome | undefined;
+  locked: boolean;
   onPick: (outcome: MatchOutcome) => void;
 }) {
   return (
@@ -360,29 +538,18 @@ function MatchPickRow({
         </View>
       </View>
       <View style={mpr.buttons}>
-        <Pressable
-          style={[mpr.btn, pick === 'home' && mpr.btnHomeSelected]}
-          onPress={() => onPick(pick === 'home' ? 'home' : 'home')}
-          onLongPress={() => {}}
-        >
-          <Text style={[mpr.btnText, pick === 'home' && mpr.btnTextSelected]}>
-            {match.homeTeam.code}
-          </Text>
-        </Pressable>
-        <Pressable
-          style={[mpr.btn, pick === 'draw' && mpr.btnDrawSelected]}
-          onPress={() => onPick('draw')}
-        >
-          <Text style={[mpr.btnText, pick === 'draw' && mpr.btnTextSelected]}>Draw</Text>
-        </Pressable>
-        <Pressable
-          style={[mpr.btn, pick === 'away' && mpr.btnHomeSelected]}
-          onPress={() => onPick('away')}
-        >
-          <Text style={[mpr.btnText, pick === 'away' && mpr.btnTextSelected]}>
-            {match.awayTeam.code}
-          </Text>
-        </Pressable>
+        {(['home', 'draw', 'away'] as const).map(o => (
+          <Pressable
+            key={o}
+            style={[mpr.btn, pick === o && mpr.btnSelected, locked && mpr.btnDisabled]}
+            onPress={() => !locked && onPick(o)}
+            disabled={locked}
+          >
+            <Text style={[mpr.btnText, pick === o && mpr.btnTextSelected]}>
+              {o === 'home' ? match.homeTeam.code : o === 'away' ? match.awayTeam.code : 'Draw'}
+            </Text>
+          </Pressable>
+        ))}
       </View>
     </View>
   );
@@ -398,19 +565,20 @@ const mpr = StyleSheet.create({
   vs:             { fontSize: 10, fontFamily: fonts.barlowBold, color: colors.textMuted, paddingHorizontal: 4 },
   buttons:        { flexDirection: 'row', gap: 6 },
   btn:            { flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center', backgroundColor: colors.neutralUnselected, borderWidth: 1, borderColor: colors.neutralBorder },
-  btnHomeSelected:{ backgroundColor: colors.neutralSelected, borderColor: colors.neutralSelected },
-  btnDrawSelected:{ backgroundColor: colors.neutralSelected, borderColor: colors.neutralSelected },
+  btnSelected:    { backgroundColor: colors.neutralSelected, borderColor: colors.neutralSelected },
+  btnDisabled:    { opacity: 0.45 },
   btnText:        { fontSize: 11, fontFamily: fonts.barlowSemi, color: colors.neutralText, letterSpacing: 0.5 },
   btnTextSelected:{ color: '#FFFFFF' },
 });
 
-// ── GroupSection (collapsible) ────────────────────────────────────────────────
+// ── GroupSection ──────────────────────────────────────────────────────────────
 
 function GroupSection({
-  group, picks, isExpanded, onToggle, onPick,
+  group, picks, lockedMatchIds, isExpanded, onToggle, onPick,
 }: {
   group: string;
   picks: GroupPicks;
+  lockedMatchIds: Set<string>;
   isExpanded: boolean;
   onToggle: () => void;
   onPick: (matchId: string, outcome: MatchOutcome) => void;
@@ -425,7 +593,7 @@ function GroupSection({
           <Text style={gsc.groupLabel}>GROUP {group}</Text>
           <Text style={gsc.progress}>{pickCount}/6</Text>
         </View>
-        <Text style={gsc.chevron}>{isExpanded ? '▲' : '▼'}</Text>
+        <ChevronSVG open={isExpanded} />
       </Pressable>
       {isExpanded && (
         <View style={gsc.body}>
@@ -435,7 +603,8 @@ function GroupSection({
               <MatchPickRow
                 match={m}
                 pick={picks[m.id]}
-                onPick={(outcome) => onPick(m.id, outcome)}
+                locked={lockedMatchIds.has(m.id)}
+                onPick={outcome => onPick(m.id, outcome)}
               />
             </React.Fragment>
           ))}
@@ -451,46 +620,8 @@ const gsc = StyleSheet.create({
   headerLeft:  { flexDirection: 'row', alignItems: 'center', gap: 10 },
   groupLabel:  { fontSize: 14, fontFamily: fonts.barlowBold, color: colors.textNavy, letterSpacing: 1.5 },
   progress:    { fontSize: 11, fontFamily: fonts.interMedium, color: colors.textMuted, letterSpacing: 0.3 },
-  chevron:     { fontSize: 10, fontFamily: fonts.interRegular, color: colors.textMuted },
   body:        { borderTopWidth: 1, borderTopColor: colors.divider },
   divider:     { height: 1, backgroundColor: colors.divider, marginHorizontal: 14 },
-});
-
-// ── GroupPicksTab ─────────────────────────────────────────────────────────────
-
-function GroupPicksTab({
-  picks, onPick, onReset,
-}: {
-  picks: GroupPicks;
-  onPick: (matchId: string, outcome: MatchOutcome) => void;
-  onReset: () => void;
-}) {
-  const [expandedGroup, setExpandedGroup] = useState<string | null>('A');
-
-  function toggle(g: string) {
-    setExpandedGroup(prev => prev === g ? null : g);
-  }
-
-  return (
-    <ScrollView style={gpt.scroll} contentContainerStyle={gpt.content} showsVerticalScrollIndicator={false}>
-      {GROUPS.map(g => (
-        <GroupSection
-          key={g}
-          group={g}
-          picks={picks}
-          isExpanded={expandedGroup === g}
-          onToggle={() => toggle(g)}
-          onPick={onPick}
-        />
-      ))}
-      <ResetButton onPress={onReset} />
-    </ScrollView>
-  );
-}
-
-const gpt = StyleSheet.create({
-  scroll:  { flex: 1 },
-  content: { paddingTop: 12, paddingBottom: 8 },
 });
 
 // ── StandingsRow ──────────────────────────────────────────────────────────────
@@ -498,23 +629,19 @@ const gpt = StyleSheet.create({
 function StandingsRow({ stat, rank }: { stat: TeamStats; rank: number }) {
   const advances = rank <= 2;
   const wildcard = rank === 3;
-
   return (
     <View style={[sdr.row, advances && sdr.rowAdvances, wildcard && sdr.rowWildcard]}>
       {advances && <View style={sdr.stripeGreen} />}
       {wildcard  && <View style={sdr.stripeAmber} />}
       <TeamFlagImage flagUrl={getFlagUrl(stat.code)} width={20} height={13} />
       <Text style={sdr.name} numberOfLines={1}>{stat.name}</Text>
-      <Text style={sdr.stat}>{stat.wins}</Text>
-      <Text style={sdr.statLabel}>W</Text>
-      <Text style={sdr.stat}>{stat.draws}</Text>
-      <Text style={sdr.statLabel}>D</Text>
-      <Text style={sdr.stat}>{stat.losses}</Text>
-      <Text style={sdr.statLabel}>L</Text>
+      <Text style={sdr.stat}>{stat.wins}</Text><Text style={sdr.statLabel}>W</Text>
+      <Text style={sdr.stat}>{stat.draws}</Text><Text style={sdr.statLabel}>D</Text>
+      <Text style={sdr.stat}>{stat.losses}</Text><Text style={sdr.statLabel}>L</Text>
       <Text style={[sdr.pts, stat.points > 0 && sdr.ptsActive]}>{stat.points}</Text>
       <View style={sdr.badge}>
         {advances && <Text style={sdr.badgeAdvances}>Advances</Text>}
-        {wildcard  && <Text style={sdr.badgeWildcard}>Potential wildcard</Text>}
+        {wildcard  && <Text style={sdr.badgeWildcard}>Wildcard?</Text>}
       </View>
     </View>
   );
@@ -531,7 +658,7 @@ const sdr = StyleSheet.create({
   statLabel:     { fontSize: 10, fontFamily: fonts.interMedium, color: colors.textMuted, width: 14, textAlign: 'center' },
   pts:           { fontSize: 13, fontFamily: fonts.interSemi, color: colors.textMuted, width: 20, textAlign: 'center' },
   ptsActive:     { color: colors.accent },
-  badge:         { width: 96, alignItems: 'flex-end' },
+  badge:         { width: 72, alignItems: 'flex-end' },
   badgeAdvances: { fontSize: 11, fontFamily: fonts.barlowSemi, color: colors.accent, letterSpacing: 0.3 },
   badgeWildcard: { fontSize: 10, fontFamily: fonts.barlowSemi, color: colors.amber, letterSpacing: 0.2 },
 });
@@ -541,7 +668,6 @@ const sdr = StyleSheet.create({
 function GroupStandingsSection({ group, picks }: { group: string; picks: GroupPicks }) {
   const matches   = getGroupMatches(group);
   const standings = computeStandings(matches, picks);
-
   return (
     <View style={gss.container}>
       <View style={gss.header}>
@@ -550,12 +676,10 @@ function GroupStandingsSection({ group, picks }: { group: string; picks: GroupPi
       </View>
       <View style={gss.card}>
         <View style={gss.tableHeader}>
-          <Text style={[gss.colTeam]}>Team</Text>
-          <Text style={gss.colNum}>W</Text>
-          <Text style={gss.colNum}>D</Text>
-          <Text style={gss.colNum}>L</Text>
+          <Text style={gss.colTeam}>Team</Text>
+          <Text style={gss.colNum}>W</Text><Text style={gss.colNum}>D</Text><Text style={gss.colNum}>L</Text>
           <Text style={gss.colPts}>Pts</Text>
-          <View style={{ width: 96 }} />
+          <View style={{ width: 72 }} />
         </View>
         {standings.map((stat, i) => (
           <React.Fragment key={stat.code}>
@@ -581,406 +705,78 @@ const gss = StyleSheet.create({
   divider:     { height: 1, backgroundColor: colors.divider, marginHorizontal: 14 },
 });
 
-// ── StandingsTab ──────────────────────────────────────────────────────────────
+// ── GroupsContent ─────────────────────────────────────────────────────────────
 
-function StandingsTab({ picks, onReset }: { picks: GroupPicks; onReset: () => void }) {
+function GroupsContent({
+  picks, lockedMatchIds, onPick, onReset,
+}: {
+  picks: GroupPicks;
+  lockedMatchIds: Set<string>;
+  onPick: (matchId: string, outcome: MatchOutcome) => void;
+  onReset: () => void;
+}) {
+  const [expandedGroup, setExpandedGroup] = useState<string | null>('A');
+
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={sdt.content} showsVerticalScrollIndicator={false}>
-      {GROUPS.map(g => (
-        <GroupStandingsSection key={g} group={g} picks={picks} />
-      ))}
-      <View style={sdt.note}>
-        <Text style={sdt.noteText}>Tiebreakers simplified for MVP.</Text>
+    <ScrollView style={gc.scroll} contentContainerStyle={gc.content} showsVerticalScrollIndicator={false}>
+      <View style={gc.sectionHeader}>
+        <Text style={gc.sectionLabel}>MY PICKS</Text>
+        <View style={gc.sectionLine} />
       </View>
+      {GROUPS.map(g => (
+        <GroupSection
+          key={g} group={g} picks={picks} lockedMatchIds={lockedMatchIds}
+          isExpanded={expandedGroup === g}
+          onToggle={() => setExpandedGroup(prev => prev === g ? null : g)}
+          onPick={onPick}
+        />
+      ))}
+      <View style={[gc.sectionHeader, gc.sectionHeaderGap]}>
+        <Text style={gc.sectionLabel}>MY STANDINGS</Text>
+        <View style={gc.sectionLine} />
+      </View>
+      {GROUPS.map(g => <GroupStandingsSection key={g} group={g} picks={picks} />)}
+      <Text style={gc.tiebreaker}>Tiebreakers simplified for MVP.</Text>
       <ResetButton onPress={onReset} />
     </ScrollView>
   );
 }
 
-const sdt = StyleSheet.create({
-  content: { paddingTop: 16, paddingBottom: 8 },
-  note:    { marginHorizontal: H_PAD, marginBottom: 4 },
-  noteText:{ fontSize: 11, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.3, fontStyle: 'italic' },
-});
-
-// ── Coming soon placeholder ───────────────────────────────────────────────────
-
-function ComingSoon({ label }: { label: string }) {
-  return (
-    <View style={cs.wrap}>
-      <Text style={cs.title}>{label}</Text>
-      <Text style={cs.sub}>Coming soon in a future update</Text>
-    </View>
-  );
-}
-
-const cs = StyleSheet.create({
-  wrap:  { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },
-  title: { fontSize: 17, fontFamily: fonts.barlowBold, color: colors.textPrimary, letterSpacing: 0.2 },
-  sub:   { fontSize: 13, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.3 },
-});
-
-// ── Knockout bracket sub-components (unchanged) ───────────────────────────────
-
-function EmptyState({ onCreate }: { onCreate: () => void }) {
-  return (
-    <View style={es.container}>
-      <TrophySVG />
-      <Text style={es.headline}>Build your World Cup bracket</Text>
-      <Text style={es.sub}>Pick teams for every round and call your champion</Text>
-      <Pressable
-        style={({ pressed }) => [es.btn, pressed && es.btnPressed]}
-        onPress={onCreate}
-        accessibilityRole="button"
-        accessibilityLabel="Create bracket"
-      >
-        <Text style={es.btnText}>Create Bracket</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-const es = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40, gap: 12 },
-  headline:  { fontSize: 20, fontFamily: fonts.barlowBold, color: colors.textPrimary, textAlign: 'center', letterSpacing: 0.2, marginTop: 4 },
-  sub:       { fontSize: 14, fontFamily: fonts.interRegular, color: colors.textSecondary, textAlign: 'center', lineHeight: 20, letterSpacing: 0.2 },
-  btn:       { marginTop: 8, backgroundColor: colors.accent, paddingVertical: 14, paddingHorizontal: 32, borderRadius: 12, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
-  btnPressed:{ opacity: 0.8 },
-  btnText:   { fontSize: 15, fontFamily: fonts.barlowBold, color: '#FFFFFF', letterSpacing: 0.4 },
-});
-
-type TeamRowProps = {
-  team: TeamEntry | null;
-  isWinner: boolean; isLoser: boolean;
-  canPick: boolean; canAdvance: boolean;
-  locked: boolean;
-  onPress: () => void;
-};
-
-function TeamRow({ team, isWinner, isLoser, canPick, canAdvance, locked, onPress }: TeamRowProps) {
-  const pressable = !locked && (canPick || canAdvance);
-
-  if (!team) {
-    if (canPick) {
-      return (
-        <Pressable style={({ pressed }) => [tr.row, tr.emptyRow, pressed && tr.rowPressed]} onPress={onPress} accessibilityRole="button" accessibilityLabel="Pick a team">
-          <View style={tr.emptyDot} />
-          <Text style={tr.emptyText}>Pick a team</Text>
-        </Pressable>
-      );
-    }
-    return (
-      <View style={[tr.row, tr.awaitingRow]}>
-        <Text style={tr.awaitingText}>—</Text>
-      </View>
-    );
-  }
-
-  return (
-    <Pressable
-      style={({ pressed }) => [tr.row, isWinner && tr.winnerRow, isLoser && tr.loserRow, pressable && pressed && tr.rowPressed]}
-      onPress={pressable ? onPress : undefined}
-      accessibilityRole={pressable ? 'button' : 'text'}
-      accessibilityLabel={pressable ? `Advance ${team.name}` : team.name}
-      accessibilityState={isWinner ? { selected: true } : undefined}
-    >
-      {isWinner && <View style={tr.winnerStripe} />}
-      <TeamFlagImage flagUrl={getFlagUrl(team.code)} width={22} height={14} />
-      <Text style={[tr.teamName, isWinner && tr.winnerName, isLoser && tr.loserName]} numberOfLines={1}>{team.name}</Text>
-      {isWinner && <View style={tr.checkWrap}><CheckIcon /></View>}
-    </Pressable>
-  );
-}
-
-const tr = StyleSheet.create({
-  row:          { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 9, gap: 8, minHeight: 40, position: 'relative' },
-  emptyRow:     { backgroundColor: colors.background },
-  awaitingRow:  { backgroundColor: colors.background },
-  winnerRow:    { backgroundColor: colors.groupPillBg },
-  loserRow:     { opacity: 0.38 },
-  rowPressed:   { opacity: 0.6 },
-  winnerStripe: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, backgroundColor: colors.accent, borderTopLeftRadius: 4, borderBottomLeftRadius: 4 },
-  teamName:     { flex: 1, fontSize: 13, fontFamily: fonts.interMedium, color: colors.textPrimary, letterSpacing: 0.1 },
-  winnerName:   { fontFamily: fonts.barlowSemi, color: colors.accent },
-  loserName:    { color: colors.textSecondary },
-  emptyDot:     { width: 6, height: 6, borderRadius: 3, borderWidth: 1.5, borderColor: colors.textMuted },
-  emptyText:    { flex: 1, fontSize: 13, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.2 },
-  awaitingText: { flex: 1, fontSize: 13, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.2 },
-  checkWrap:    { width: 20, alignItems: 'center' },
-});
-
-type MatchupCardProps = {
-  matchup: MatchupPick; round: RoundKey; mIdx: number;
-  locked: boolean;
-  onPickSlot: (slot: 'top' | 'bot') => void;
-  onAdvance: (winner: TeamEntry) => void;
-};
-
-function MatchupCardFull({ matchup, round, mIdx, locked, onPickSlot, onAdvance }: MatchupCardProps) {
-  const { top, bot, winner } = matchup;
-  const bothFilled = top !== null && bot !== null;
-  const isR16      = round === 'r16';
-
-  function rowProps(team: TeamEntry | null): Omit<TeamRowProps, 'onPress'> {
-    return {
-      team,
-      isWinner: winner !== null && winner.code === team?.code,
-      isLoser:  winner !== null && winner.code !== team?.code,
-      canPick:  isR16 && team === null,
-      canAdvance: bothFilled && team !== null,
-      locked,
-    };
-  }
-
-  return (
-    <View style={mc.card}>
-      <TeamRow {...rowProps(top)} onPress={() => { if (isR16 && top === null) onPickSlot('top'); else if (bothFilled && !locked && top) onAdvance(top); }} />
-      <View style={mc.divider} />
-      <TeamRow {...rowProps(bot)} onPress={() => { if (isR16 && bot === null) onPickSlot('bot'); else if (bothFilled && !locked && bot) onAdvance(bot); }} />
-    </View>
-  );
-}
-
-const mc = StyleSheet.create({
-  card:    { backgroundColor: colors.card, borderRadius: 10, borderWidth: 1, borderColor: colors.cardBorder, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3, elevation: 1 },
-  divider: { height: 1, backgroundColor: colors.divider },
-});
-
-type RoundSectionProps = {
-  label: string; matchups: MatchupPick[]; round: RoundKey;
-  twoCol: boolean; locked: boolean;
-  onPickSlot: (mIdx: number, slot: 'top' | 'bot') => void;
-  onAdvance: (round: RoundKey, mIdx: number, winner: TeamEntry) => void;
-};
-
-function RoundSection({ label, matchups, round, twoCol, locked, onPickSlot, onAdvance }: RoundSectionProps) {
-  return (
-    <View style={rss.section}>
-      <View style={rss.header}>
-        <Text style={rss.label}>{label}</Text>
-        <View style={rss.line} />
-      </View>
-      {twoCol ? (
-        <View style={rss.grid}>
-          {matchups.map((m, i) => (
-            <View key={i} style={{ width: CARD_W }}>
-              <MatchupCardFull matchup={m} round={round} mIdx={i} locked={locked} onPickSlot={(slot) => onPickSlot(i, slot)} onAdvance={(w) => onAdvance(round, i, w)} />
-            </View>
-          ))}
-        </View>
-      ) : (
-        <View style={rss.col}>
-          {matchups.map((m, i) => (
-            <MatchupCardFull key={i} matchup={m} round={round} mIdx={i} locked={locked} onPickSlot={(slot) => onPickSlot(i, slot)} onAdvance={(w) => onAdvance(round, i, w)} />
-          ))}
-        </View>
-      )}
-    </View>
-  );
-}
-
-const rss = StyleSheet.create({
-  section: { marginBottom: 24 },
-  header:  { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
-  label:   { fontSize: 12, fontFamily: fonts.barlowBold, color: colors.textSecondary, letterSpacing: 2 },
-  line:    { flex: 1, height: 1, backgroundColor: colors.divider },
-  grid:    { flexDirection: 'row', flexWrap: 'wrap', gap: COL_GAP },
-  col:     { gap: 8 },
-});
-
-function ChampionCard({ champion }: { champion: TeamEntry | null }) {
-  return (
-    <View style={champ.section}>
-      <View style={rss.header}>
-        <Text style={rss.label}>CHAMPION</Text>
-        <View style={rss.line} />
-      </View>
-      <View style={champ.card}>
-        <View style={champ.inner}>
-          <TrophySVG />
-          {champion ? (
-            <View style={champ.teamRow}>
-              <TeamFlagImage flagUrl={getFlagUrl(champion.code)} width={28} height={18} />
-              <Text style={champ.teamName}>{champion.name}</Text>
-            </View>
-          ) : (
-            <Text style={champ.placeholder}>Pick your champion above</Text>
-          )}
-        </View>
-      </View>
-    </View>
-  );
-}
-
-const champ = StyleSheet.create({
-  section:     { marginBottom: 32 },
-  card:        { backgroundColor: colors.card, borderRadius: 14, borderWidth: 1.5, borderColor: colors.accent, shadowColor: colors.accent, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 8, elevation: 3 },
-  inner:       { alignItems: 'center', paddingVertical: 20, paddingHorizontal: 16, gap: 10 },
-  teamRow:     { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  teamName:    { fontSize: 20, fontFamily: fonts.barlowBold, color: colors.textPrimary, letterSpacing: 0.3 },
-  placeholder: { fontSize: 14, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.3 },
-});
-
-type PickerTarget = { mIdx: number; slot: 'top' | 'bot' };
-type TeamPickerProps = { visible: boolean; onClose: () => void; onSelect: (team: TeamEntry) => void };
-const ALL_TEAMS = getAllTeams();
-
-function TeamPickerModal({ visible, onClose, onSelect }: TeamPickerProps) {
-  const [query, setQuery] = useState('');
-  const filtered = useMemo(
-    () => query.trim() ? ALL_TEAMS.filter(t => t.teamName.toLowerCase().includes(query.toLowerCase())) : ALL_TEAMS,
-    [query],
-  );
-
-  function handleClose() { setQuery(''); onClose(); }
-  function handleSelect(t: { teamCode: string; teamName: string }) { setQuery(''); onSelect({ code: t.teamCode, name: t.teamName }); }
-
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
-      <View style={pm.overlay}>
-        <Pressable style={pm.backdrop} onPress={handleClose} />
-        <View style={pm.sheet}>
-          <View style={pm.handle} />
-          <View style={pm.sheetHeader}>
-            <Text style={pm.title}>Select a Team</Text>
-            <Pressable style={pm.closeBtn} onPress={handleClose} accessibilityRole="button" accessibilityLabel="Close">
-              <Text style={pm.closeBtnText}>X</Text>
-            </Pressable>
-          </View>
-          <View style={pm.searchRow}>
-            <TextInput style={pm.searchInput} value={query} onChangeText={setQuery} placeholder="Search teams..." placeholderTextColor={colors.textMuted} autoCorrect={false} clearButtonMode="while-editing" returnKeyType="search" accessibilityLabel="Search teams" />
-          </View>
-          <FlatList
-            data={filtered}
-            keyExtractor={item => item.teamCode}
-            contentContainerStyle={pm.listContent}
-            keyboardShouldPersistTaps="handled"
-            renderItem={({ item }) => (
-              <Pressable style={({ pressed }) => [pm.teamRow, pressed && pm.teamRowPressed]} onPress={() => handleSelect(item)} accessibilityRole="button" accessibilityLabel={`Select ${item.teamName}`}>
-                <TeamFlagImage flagUrl={getFlagUrl(item.teamCode)} width={28} height={18} />
-                <Text style={pm.teamName}>{item.teamName}</Text>
-              </Pressable>
-            )}
-            ItemSeparatorComponent={() => <View style={pm.sep} />}
-            ListEmptyComponent={<View style={pm.emptySearch}><Text style={pm.emptySearchText}>No teams found</Text></View>}
-          />
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-const pm = StyleSheet.create({
-  overlay:        { flex: 1, justifyContent: 'flex-end' },
-  backdrop:       { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.42)' },
-  sheet:          { backgroundColor: colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '80%', paddingBottom: 24 },
-  handle:         { width: 36, height: 4, borderRadius: 2, backgroundColor: colors.cardBorder, alignSelf: 'center', marginTop: 10, marginBottom: 4 },
-  sheetHeader:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12 },
-  title:          { fontSize: 16, fontFamily: fonts.barlowBold, color: colors.textPrimary, letterSpacing: 0.2 },
-  closeBtn:       { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' },
-  closeBtnText:   { fontSize: 14, fontFamily: fonts.barlowSemi, color: colors.textSecondary },
-  searchRow:      { paddingHorizontal: 16, paddingBottom: 8 },
-  searchInput:    { backgroundColor: colors.background, borderRadius: 10, borderWidth: 1, borderColor: colors.cardBorder, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: colors.textPrimary, minHeight: 44 },
-  listContent:    { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 8 },
-  teamRow:        { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, gap: 12, minHeight: 44 },
-  teamRowPressed: { opacity: 0.55 },
-  teamName:       { flex: 1, fontSize: 15, fontFamily: fonts.interMedium, color: colors.textPrimary, letterSpacing: 0.2 },
-  sep:            { height: 1, backgroundColor: colors.divider },
-  emptySearch:    { paddingVertical: 32, alignItems: 'center' },
-  emptySearchText:{ fontSize: 14, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.3 },
-});
-
-function LockedBanner({ lockedAt }: { lockedAt: string }) {
-  return (
-    <View style={lb.banner}>
-      <LockSVG size={14} />
-      <Text style={lb.text}>Locked · {formatLockDate(lockedAt)}</Text>
-    </View>
-  );
-}
-
-const lb = StyleSheet.create({
-  banner: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.background, borderBottomWidth: 1, borderBottomColor: colors.divider, paddingHorizontal: 16, paddingVertical: 8 },
-  text:   { fontSize: 12, fontFamily: fonts.interMedium, color: colors.textSecondary, letterSpacing: 0.3 },
-});
-
-type ActionBarProps = { bracket: Bracket; onLock: () => void; onEditCopy: () => void; onShare: () => void };
-
-function ActionBar({ bracket, onLock, onEditCopy, onShare }: ActionBarProps) {
-  const isDraft = bracket.state === 'draft';
-  return (
-    <View style={ab.bar}>
-      {isDraft ? (
-        <Pressable style={({ pressed }) => [ab.lockBtn, pressed && ab.btnPressed]} onPress={onLock} accessibilityRole="button" accessibilityLabel="Lock bracket">
-          <LockSVG size={13} />
-          <Text style={ab.lockText}>Lock Bracket</Text>
-        </Pressable>
-      ) : (
-        <Pressable style={({ pressed }) => [ab.editBtn, pressed && ab.btnPressed]} onPress={onEditCopy} accessibilityRole="button" accessibilityLabel="Edit a copy">
-          <Text style={ab.editText}>Edit Copy</Text>
-        </Pressable>
-      )}
-      <Pressable style={({ pressed }) => [ab.shareBtn, pressed && ab.btnPressed]} onPress={onShare} accessibilityRole="button" accessibilityLabel="Share bracket">
-        <ShareSVG />
-        <Text style={ab.shareText}>Share</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-const ab = StyleSheet.create({
-  bar:        { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.divider, backgroundColor: colors.card },
-  lockBtn:    { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 10, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.cardBorder, minHeight: 40 },
-  editBtn:    { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 10, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.cardBorder, minHeight: 40 },
-  shareBtn:   { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 10, backgroundColor: colors.groupPillBg, borderWidth: 1, borderColor: colors.accent, minHeight: 40 },
-  btnPressed: { opacity: 0.65 },
-  lockText:   { fontSize: 13, fontFamily: fonts.barlowSemi, color: colors.textSecondary, letterSpacing: 0.3 },
-  editText:   { fontSize: 13, fontFamily: fonts.barlowSemi, color: colors.textSecondary, letterSpacing: 0.3 },
-  shareText:  { fontSize: 13, fontFamily: fonts.barlowSemi, color: colors.accent, letterSpacing: 0.3 },
+const gc = StyleSheet.create({
+  scroll:            { flex: 1 },
+  content:           { paddingTop: 12, paddingBottom: 8 },
+  sectionHeader:     { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: H_PAD, marginBottom: 10 },
+  sectionHeaderGap:  { marginTop: 8 },
+  sectionLabel:      { fontSize: 11, fontFamily: fonts.barlowBold, color: colors.textMuted, letterSpacing: 2 },
+  sectionLine:       { flex: 1, height: 1, backgroundColor: colors.divider },
+  tiebreaker:        { marginHorizontal: H_PAD, marginBottom: 4, fontSize: 11, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.3, fontStyle: 'italic' },
 });
 
 // ── Knockout data structures ──────────────────────────────────────────────────
 
-type SlotSource =
-  | { t: 'gw'; g: string }    // group winner
-  | { t: 'gr'; g: string }    // group runner-up
-  | { t: 'b3'; r: number };   // best 3rd (rank 1–8 simplified)
-
+type SlotSource = { t: 'gw'; g: string } | { t: 'gr'; g: string } | { t: 'b3'; r: number };
 type KnockoutTeam = { code: string; name: string };
-type KnockoutMatchup = {
-  num: number;
-  top: KnockoutTeam | null;
-  bot: KnockoutTeam | null;
-  topLbl: string;
-  botLbl: string;
-  winner: KnockoutTeam | null;
-};
+type KnockoutMatchup = { num: number; top: KnockoutTeam | null; bot: KnockoutTeam | null; topLbl: string; botLbl: string; winner: KnockoutTeam | null };
 
-// R32 slot definitions (from official FIFA schedule):
-const R32_SLOTS: Array<{
-  num: number;
-  ts: SlotSource; tl: string;
-  bs: SlotSource; bl: string;
-}> = [
-  { num:73,  ts:{t:'gr',g:'A'}, tl:'Group A Runner-up',  bs:{t:'gr',g:'B'}, bl:'Group B Runner-up'  },
-  { num:74,  ts:{t:'gw',g:'E'}, tl:'Group E Winner',     bs:{t:'b3',r:1},   bl:'Best 3rd Place #1'  },
-  { num:75,  ts:{t:'gw',g:'F'}, tl:'Group F Winner',     bs:{t:'gr',g:'C'}, bl:'Group C Runner-up'  },
-  { num:76,  ts:{t:'gw',g:'C'}, tl:'Group C Winner',     bs:{t:'gr',g:'F'}, bl:'Group F Runner-up'  },
-  { num:77,  ts:{t:'gw',g:'I'}, tl:'Group I Winner',     bs:{t:'b3',r:2},   bl:'Best 3rd Place #2'  },
-  { num:78,  ts:{t:'gr',g:'E'}, tl:'Group E Runner-up',  bs:{t:'gr',g:'I'}, bl:'Group I Runner-up'  },
-  { num:79,  ts:{t:'gw',g:'A'}, tl:'Group A Winner',     bs:{t:'b3',r:3},   bl:'Best 3rd Place #3'  },
-  { num:80,  ts:{t:'gw',g:'L'}, tl:'Group L Winner',     bs:{t:'b3',r:4},   bl:'Best 3rd Place #4'  },
-  { num:81,  ts:{t:'gw',g:'D'}, tl:'Group D Winner',     bs:{t:'b3',r:5},   bl:'Best 3rd Place #5'  },
-  { num:82,  ts:{t:'gw',g:'G'}, tl:'Group G Winner',     bs:{t:'b3',r:6},   bl:'Best 3rd Place #6'  },
-  { num:83,  ts:{t:'gr',g:'K'}, tl:'Group K Runner-up',  bs:{t:'gr',g:'L'}, bl:'Group L Runner-up'  },
-  { num:84,  ts:{t:'gw',g:'H'}, tl:'Group H Winner',     bs:{t:'gr',g:'J'}, bl:'Group J Runner-up'  },
-  { num:85,  ts:{t:'gw',g:'B'}, tl:'Group B Winner',     bs:{t:'b3',r:7},   bl:'Best 3rd Place #7'  },
-  { num:86,  ts:{t:'gw',g:'J'}, tl:'Group J Winner',     bs:{t:'gr',g:'H'}, bl:'Group H Runner-up'  },
-  { num:87,  ts:{t:'gw',g:'K'}, tl:'Group K Winner',     bs:{t:'b3',r:8},   bl:'Best 3rd Place #8'  },
-  { num:88,  ts:{t:'gr',g:'D'}, tl:'Group D Runner-up',  bs:{t:'gr',g:'G'}, bl:'Group G Runner-up'  },
+const R32_SLOTS: Array<{ num: number; ts: SlotSource; tl: string; bs: SlotSource; bl: string }> = [
+  { num:73, ts:{t:'gr',g:'A'}, tl:'Group A Runner-up', bs:{t:'gr',g:'B'}, bl:'Group B Runner-up'  },
+  { num:74, ts:{t:'gw',g:'E'}, tl:'Group E Winner',    bs:{t:'b3',r:1},   bl:'Best 3rd Place #1'  },
+  { num:75, ts:{t:'gw',g:'F'}, tl:'Group F Winner',    bs:{t:'gr',g:'C'}, bl:'Group C Runner-up'  },
+  { num:76, ts:{t:'gw',g:'C'}, tl:'Group C Winner',    bs:{t:'gr',g:'F'}, bl:'Group F Runner-up'  },
+  { num:77, ts:{t:'gw',g:'I'}, tl:'Group I Winner',    bs:{t:'b3',r:2},   bl:'Best 3rd Place #2'  },
+  { num:78, ts:{t:'gr',g:'E'}, tl:'Group E Runner-up', bs:{t:'gr',g:'I'}, bl:'Group I Runner-up'  },
+  { num:79, ts:{t:'gw',g:'A'}, tl:'Group A Winner',    bs:{t:'b3',r:3},   bl:'Best 3rd Place #3'  },
+  { num:80, ts:{t:'gw',g:'L'}, tl:'Group L Winner',    bs:{t:'b3',r:4},   bl:'Best 3rd Place #4'  },
+  { num:81, ts:{t:'gw',g:'D'}, tl:'Group D Winner',    bs:{t:'b3',r:5},   bl:'Best 3rd Place #5'  },
+  { num:82, ts:{t:'gw',g:'G'}, tl:'Group G Winner',    bs:{t:'b3',r:6},   bl:'Best 3rd Place #6'  },
+  { num:83, ts:{t:'gr',g:'K'}, tl:'Group K Runner-up', bs:{t:'gr',g:'L'}, bl:'Group L Runner-up'  },
+  { num:84, ts:{t:'gw',g:'H'}, tl:'Group H Winner',    bs:{t:'gr',g:'J'}, bl:'Group J Runner-up'  },
+  { num:85, ts:{t:'gw',g:'B'}, tl:'Group B Winner',    bs:{t:'b3',r:7},   bl:'Best 3rd Place #7'  },
+  { num:86, ts:{t:'gw',g:'J'}, tl:'Group J Winner',    bs:{t:'gr',g:'H'}, bl:'Group H Runner-up'  },
+  { num:87, ts:{t:'gw',g:'K'}, tl:'Group K Winner',    bs:{t:'b3',r:8},   bl:'Best 3rd Place #8'  },
+  { num:88, ts:{t:'gr',g:'D'}, tl:'Group D Runner-up', bs:{t:'gr',g:'G'}, bl:'Group G Runner-up'  },
 ];
 
-// Advancement: match → [topFeeder, botFeeder]
 const ADV: Record<number, [number, number]> = {
   89:[74,77], 90:[73,75], 91:[76,78], 92:[79,80],
   93:[83,84], 94:[81,82], 95:[86,88], 96:[85,87],
@@ -996,101 +792,42 @@ const KNOCKOUT_ROUNDS: Array<{ lbl: string; nums: number[]; two: boolean }> = [
   { lbl:'FINAL',         nums:[104],                                              two:false },
 ];
 
-// ── Knockout logic ────────────────────────────────────────────────────────────
-
-function resolveSlot(
-  src: SlotSource,
-  groupStandings: Map<string, TeamStats[]>,
-  best3rd: TeamStats[],
-): KnockoutTeam | null {
-  if (src.t === 'gw') {
-    const standings = groupStandings.get(src.g);
-    if (!standings || standings.length < 1) return null;
-    const t = standings[0];
-    return { code: t.code, name: t.name };
-  }
-  if (src.t === 'gr') {
-    const standings = groupStandings.get(src.g);
-    if (!standings || standings.length < 2) return null;
-    const t = standings[1];
-    return { code: t.code, name: t.name };
-  }
-  // b3
-  const idx = (src as { t: 'b3'; r: number }).r - 1;
-  const t = best3rd[idx];
-  if (!t) return null;
-  return { code: t.code, name: t.name };
+function resolveSlot(src: SlotSource, gs: Map<string, TeamStats[]>, b3: TeamStats[]): KnockoutTeam | null {
+  if (src.t === 'gw') { const s = gs.get(src.g); if (!s?.[0]) return null; return { code: s[0].code, name: s[0].name }; }
+  if (src.t === 'gr') { const s = gs.get(src.g); if (!s?.[1]) return null; return { code: s[1].code, name: s[1].name }; }
+  const t = b3[(src as { t: 'b3'; r: number }).r - 1]; return t ? { code: t.code, name: t.name } : null;
 }
 
-function buildKnockout(
-  groupPicks: GroupPicks,
-  knockoutPicks: Record<number, string>,
-): Map<number, KnockoutMatchup> {
+function buildKnockout(gp: GroupPicks, kp: Record<number, string>): Map<number, KnockoutMatchup> {
   const result = new Map<number, KnockoutMatchup>();
-
-  // Build standings for each group (only if all 6 matches are picked)
-  const groupStandings = new Map<string, TeamStats[]>();
+  const gs     = new Map<string, TeamStats[]>();
   for (const g of GROUPS) {
-    const matches = getGroupMatches(g);
-    const allPicked = matches.every(m => groupPicks[m.id] !== undefined);
-    if (allPicked) {
-      groupStandings.set(g, computeStandings(matches, groupPicks));
-    }
+    const ms = getGroupMatches(g);
+    if (ms.every(m => gp[m.id] !== undefined)) gs.set(g, computeStandings(ms, gp));
   }
-
-  // Best 3rd place teams: rank-3 from each group with complete standings, sorted pts desc then name asc
   // TODO: Apply official FIFA 3rd-place pool matrix for accurate slot assignment
-  const best3rd: TeamStats[] = [];
-  for (const g of GROUPS) {
-    const standings = groupStandings.get(g);
-    if (standings && standings.length >= 3) {
-      best3rd.push(standings[2]);
-    }
-  }
-  best3rd.sort((a, b) => b.points !== a.points ? b.points - a.points : a.name.localeCompare(b.name));
+  const b3: TeamStats[] = [];
+  for (const g of GROUPS) { const s = gs.get(g); if (s?.[2]) b3.push(s[2]); }
+  b3.sort((a, b) => b.points !== a.points ? b.points - a.points : a.name.localeCompare(b.name));
 
-  // Build R32 matchups
   for (const slot of R32_SLOTS) {
-    const top = resolveSlot(slot.ts, groupStandings, best3rd);
-    const bot = resolveSlot(slot.bs, groupStandings, best3rd);
-    const pickedCode = knockoutPicks[slot.num];
-    let winner: KnockoutTeam | null = null;
-    if (pickedCode) {
-      if (top?.code === pickedCode) winner = top;
-      else if (bot?.code === pickedCode) winner = bot;
-    }
-    result.set(slot.num, {
-      num: slot.num,
-      top,
-      bot,
-      topLbl: slot.tl,
-      botLbl: slot.bl,
-      winner,
-    });
+    const top = resolveSlot(slot.ts, gs, b3);
+    const bot = resolveSlot(slot.bs, gs, b3);
+    const pc  = kp[slot.num];
+    const winner: KnockoutTeam | null = pc ? (top?.code === pc ? top : bot?.code === pc ? bot : null) : null;
+    result.set(slot.num, { num: slot.num, top, bot, topLbl: slot.tl, botLbl: slot.bl, winner });
   }
-
-  // Build R16 through Final via advancement
   for (const round of KNOCKOUT_ROUNDS.slice(1)) {
     for (const num of round.nums) {
-      const feeders = ADV[num];
-      if (!feeders) continue;
-      const [topFeed, botFeed] = feeders;
-      const topMatchup = result.get(topFeed);
-      const botMatchup = result.get(botFeed);
-      const top = topMatchup?.winner ?? null;
-      const bot = botMatchup?.winner ?? null;
-      const topLbl = topMatchup ? `Winner M${topFeed}` : `Winner M${topFeed}`;
-      const botLbl = botMatchup ? `Winner M${botFeed}` : `Winner M${botFeed}`;
-      const pickedCode = knockoutPicks[num];
-      let winner: KnockoutTeam | null = null;
-      if (pickedCode) {
-        if (top?.code === pickedCode) winner = top;
-        else if (bot?.code === pickedCode) winner = bot;
-      }
-      result.set(num, { num, top, bot, topLbl, botLbl, winner });
+      const feeders = ADV[num]; if (!feeders) continue;
+      const [tf, bf] = feeders;
+      const top = result.get(tf)?.winner ?? null;
+      const bot = result.get(bf)?.winner ?? null;
+      const pc  = kp[num];
+      const winner: KnockoutTeam | null = pc ? (top?.code === pc ? top : bot?.code === pc ? bot : null) : null;
+      result.set(num, { num, top, bot, topLbl: `Winner M${tf}`, botLbl: `Winner M${bf}`, winner });
     }
   }
-
   return result;
 }
 
@@ -1098,235 +835,151 @@ function getDownstream(matchNum: number): number[] {
   const result: number[] = [];
   for (const [m, [t, b]] of Object.entries(ADV)) {
     const mNum = +m;
-    if (t === matchNum || b === matchNum) {
-      result.push(mNum);
-      result.push(...getDownstream(mNum));
-    }
+    if (t === matchNum || b === matchNum) { result.push(mNum); result.push(...getDownstream(mNum)); }
   }
   return result;
 }
 
-function setKnockoutPick(
-  picks: Record<number, string>,
-  matchNum: number,
-  winnerCode: string | null,
-): Record<number, string> {
+function setKnockoutPick(picks: Record<number, string>, matchNum: number, winnerCode: string | null): Record<number, string> {
   const next = { ...picks };
-  if (winnerCode === null) {
-    delete next[matchNum];
-  } else {
-    next[matchNum] = winnerCode;
-  }
-  // Clear all downstream picks
-  const downstream = getDownstream(matchNum);
-  for (const d of downstream) {
-    delete next[d];
-  }
+  if (winnerCode === null) delete next[matchNum]; else next[matchNum] = winnerCode;
+  for (const d of getDownstream(matchNum)) delete next[d];
   return next;
 }
 
 // ── KnockoutMatchupCard ───────────────────────────────────────────────────────
 
-function KnockoutMatchupCard({
-  matchup,
-  onPick,
-}: {
-  matchup: KnockoutMatchup;
-  onPick: (code: string | null) => void;
-}) {
+function KnockoutMatchupCard({ matchup, onPick }: { matchup: KnockoutMatchup; onPick: (code: string | null) => void }) {
   const { num, top, bot, topLbl, botLbl, winner } = matchup;
-  const bothPresent = top !== null && bot !== null;
-
-  function handleTopPress() {
-    if (!top) return;
-    if (winner?.code === top.code) {
-      // Tap winner again to deselect
-      onPick(null);
-    } else if (bothPresent && winner === null) {
-      onPick(top.code);
-    }
-  }
-
-  function handleBotPress() {
-    if (!bot) return;
-    if (winner?.code === bot.code) {
-      onPick(null);
-    } else if (bothPresent && winner === null) {
-      onPick(bot.code);
-    }
-  }
+  const both = top !== null && bot !== null;
 
   const topIsWinner = winner !== null && top !== null && winner.code === top.code;
   const topIsLoser  = winner !== null && top !== null && winner.code !== top.code;
   const botIsWinner = winner !== null && bot !== null && winner.code === bot.code;
   const botIsLoser  = winner !== null && bot !== null && winner.code !== bot.code;
+  const topTap = top !== null && (topIsWinner || (both && !winner));
+  const botTap = bot !== null && (botIsWinner || (both && !winner));
 
-  const topTappable = top !== null && (topIsWinner || (bothPresent && winner === null));
-  const botTappable = bot !== null && (botIsWinner || (bothPresent && winner === null));
+  function tapTop() { if (!top) return; if (topIsWinner) onPick(null); else if (both && !winner) onPick(top.code); }
+  function tapBot() { if (!bot) return; if (botIsWinner) onPick(null); else if (both && !winner) onPick(bot.code); }
 
   return (
     <View style={kmc.card}>
       <Text style={kmc.matchLabel}>M{num}</Text>
-      {/* Top slot */}
       {top ? (
-        <Pressable
-          style={({ pressed }) => [
-            kmc.slotRow,
-            topIsWinner && kmc.slotWinner,
-            topIsLoser  && kmc.slotLoser,
-            topTappable && pressed && kmc.slotPressed,
-          ]}
-          onPress={handleTopPress}
-          disabled={!topTappable}
-          accessibilityRole={topTappable ? 'button' : 'text'}
-          accessibilityLabel={topTappable ? (topIsWinner ? `Deselect ${top.name}` : `Pick ${top.name}`) : top.name}
+        <Pressable style={({ pressed }) => [kmc.slot, topIsWinner && kmc.slotWin, topIsLoser && kmc.slotLose, topTap && pressed && kmc.slotPress]}
+          onPress={tapTop} disabled={!topTap}
+          accessibilityRole={topTap ? 'button' : 'text'}
+          accessibilityLabel={topTap ? (topIsWinner ? `Deselect ${top.name}` : `Pick ${top.name}`) : top.name}
           accessibilityState={topIsWinner ? { selected: true } : undefined}
           hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
         >
-          {topIsWinner && <View style={kmc.winnerStripe} />}
+          {topIsWinner && <View style={kmc.stripe} />}
           <TeamFlagImage flagUrl={getFlagUrl(top.code)} width={20} height={13} />
-          <Text style={[kmc.teamName, topIsWinner && kmc.teamNameWinner, topIsLoser && kmc.teamNameLoser]} numberOfLines={1}>{top.name}</Text>
+          <Text style={[kmc.teamName, topIsWinner && kmc.teamNameWin, topIsLoser && kmc.teamNameLose]} numberOfLines={1}>{top.name}</Text>
           {topIsWinner && <View style={kmc.checkWrap}><CheckIcon /></View>}
         </Pressable>
       ) : (
-        <View style={[kmc.slotRow, kmc.slotEmpty]}>
-          <Text style={kmc.slotLabel} numberOfLines={1}>{topLbl}</Text>
-        </View>
+        <View style={[kmc.slot, kmc.slotEmpty]}><Text style={kmc.slotLabel} numberOfLines={1}>{topLbl}</Text></View>
       )}
       <View style={kmc.divider} />
-      {/* Bottom slot */}
       {bot ? (
-        <Pressable
-          style={({ pressed }) => [
-            kmc.slotRow,
-            botIsWinner && kmc.slotWinner,
-            botIsLoser  && kmc.slotLoser,
-            botTappable && pressed && kmc.slotPressed,
-          ]}
-          onPress={handleBotPress}
-          disabled={!botTappable}
-          accessibilityRole={botTappable ? 'button' : 'text'}
-          accessibilityLabel={botTappable ? (botIsWinner ? `Deselect ${bot.name}` : `Pick ${bot.name}`) : bot.name}
+        <Pressable style={({ pressed }) => [kmc.slot, botIsWinner && kmc.slotWin, botIsLoser && kmc.slotLose, botTap && pressed && kmc.slotPress]}
+          onPress={tapBot} disabled={!botTap}
+          accessibilityRole={botTap ? 'button' : 'text'}
+          accessibilityLabel={botTap ? (botIsWinner ? `Deselect ${bot.name}` : `Pick ${bot.name}`) : bot.name}
           accessibilityState={botIsWinner ? { selected: true } : undefined}
           hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
         >
-          {botIsWinner && <View style={kmc.winnerStripe} />}
+          {botIsWinner && <View style={kmc.stripe} />}
           <TeamFlagImage flagUrl={getFlagUrl(bot.code)} width={20} height={13} />
-          <Text style={[kmc.teamName, botIsWinner && kmc.teamNameWinner, botIsLoser && kmc.teamNameLoser]} numberOfLines={1}>{bot.name}</Text>
+          <Text style={[kmc.teamName, botIsWinner && kmc.teamNameWin, botIsLoser && kmc.teamNameLose]} numberOfLines={1}>{bot.name}</Text>
           {botIsWinner && <View style={kmc.checkWrap}><CheckIcon /></View>}
         </Pressable>
       ) : (
-        <View style={[kmc.slotRow, kmc.slotEmpty]}>
-          <Text style={kmc.slotLabel} numberOfLines={1}>{botLbl}</Text>
-        </View>
+        <View style={[kmc.slot, kmc.slotEmpty]}><Text style={kmc.slotLabel} numberOfLines={1}>{botLbl}</Text></View>
       )}
     </View>
   );
 }
 
 const kmc = StyleSheet.create({
-  card:          { backgroundColor: colors.card, borderRadius: 10, borderWidth: 1, borderColor: colors.cardBorder, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3, elevation: 1 },
-  matchLabel:    { fontSize: 10, fontFamily: fonts.barlowBold, color: colors.textMuted, letterSpacing: 0.5, paddingHorizontal: 8, paddingTop: 5, paddingBottom: 2 },
-  slotRow:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 9, gap: 8, minHeight: 40, position: 'relative' },
-  slotWinner:    { backgroundColor: colors.groupPillBg },
-  slotLoser:     { opacity: 0.38 },
-  slotEmpty:     { paddingVertical: 10 },
-  slotPressed:   { opacity: 0.6 },
-  winnerStripe:  { position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, backgroundColor: colors.accent },
-  teamName:      { flex: 1, fontSize: 13, fontFamily: fonts.interMedium, color: colors.textPrimary, letterSpacing: 0.1 },
-  teamNameWinner:{ fontFamily: fonts.barlowSemi, color: colors.accent },
-  teamNameLoser: { color: colors.textSecondary },
-  slotLabel:     { flex: 1, fontSize: 12, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.1 },
-  checkWrap:     { width: 20, alignItems: 'center' },
-  divider:       { height: 1, backgroundColor: colors.divider },
+  card:        { backgroundColor: colors.card, borderRadius: 10, borderWidth: 1, borderColor: colors.cardBorder, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3, elevation: 1 },
+  matchLabel:  { fontSize: 10, fontFamily: fonts.barlowBold, color: colors.textMuted, letterSpacing: 0.5, paddingHorizontal: 8, paddingTop: 5, paddingBottom: 2 },
+  slot:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 9, gap: 8, minHeight: 40, position: 'relative' },
+  slotWin:     { backgroundColor: colors.groupPillBg },
+  slotLose:    { opacity: 0.38 },
+  slotEmpty:   { paddingVertical: 10 },
+  slotPress:   { opacity: 0.6 },
+  stripe:      { position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, backgroundColor: colors.accent },
+  teamName:    { flex: 1, fontSize: 13, fontFamily: fonts.interMedium, color: colors.textPrimary, letterSpacing: 0.1 },
+  teamNameWin: { fontFamily: fonts.barlowSemi, color: colors.accent },
+  teamNameLose:{ color: colors.textSecondary },
+  slotLabel:   { flex: 1, fontSize: 12, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.1 },
+  checkWrap:   { width: 20, alignItems: 'center' },
+  divider:     { height: 1, backgroundColor: colors.divider },
 });
 
-// ── KnockoutTab ───────────────────────────────────────────────────────────────
+// ── KnockoutContent ───────────────────────────────────────────────────────────
 
-function KnockoutTab({
-  groupPicks,
-  knockoutPicks,
-  onPick,
+function KnockoutContent({
+  groupPicks, knockoutPicks, onPick,
 }: {
   groupPicks: GroupPicks;
   knockoutPicks: Record<number, string>;
   onPick: (matchNum: number, code: string | null) => void;
 }) {
-  const bracket = useMemo(
-    () => buildKnockout(groupPicks, knockoutPicks),
-    [groupPicks, knockoutPicks],
-  );
-
-  const totalGroupMatches = GROUP_STAGE_MATCHES.length;
-  const pickedGroupCount  = Object.keys(groupPicks).length;
-  const allGroupsPicked   = pickedGroupCount >= totalGroupMatches;
-
-  const finalMatchup = bracket.get(104);
-  const champion     = finalMatchup?.winner ?? null;
+  const bracket           = useMemo(() => buildKnockout(groupPicks, knockoutPicks), [groupPicks, knockoutPicks]);
+  const totalGroup        = GROUP_STAGE_MATCHES.length;
+  const pickedGroup       = Object.keys(groupPicks).length;
+  const allPicked         = pickedGroup >= totalGroup;
+  const champion          = bracket.get(104)?.winner ?? null;
 
   return (
-    <ScrollView style={kt.scroll} contentContainerStyle={kt.content} showsVerticalScrollIndicator={false}>
-      {!allGroupsPicked && (
-        <View style={kt.infoBanner}>
-          <Text style={kt.infoText}>
-            Complete Group Picks to seed the bracket ({pickedGroupCount}/{totalGroupMatches} picked)
-          </Text>
+    <ScrollView style={ko.scroll} contentContainerStyle={ko.content} showsVerticalScrollIndicator={false}>
+      {!allPicked && (
+        <View style={ko.banner}>
+          <Text style={ko.bannerText}>Finish Group picks to fill in the bracket ({pickedGroup}/{totalGroup} picked)</Text>
         </View>
       )}
       {KNOCKOUT_ROUNDS.map(round => (
-        <View key={round.lbl} style={kt.roundSection}>
-          <View style={kt.roundHeader}>
-            <Text style={kt.roundLabel}>{round.lbl}</Text>
-            <View style={kt.roundLine} />
+        <View key={round.lbl} style={ko.section}>
+          <View style={ko.sectionHeader}>
+            <Text style={ko.sectionLabel}>{round.lbl}</Text>
+            <View style={ko.sectionLine} />
           </View>
           {round.two ? (
-            <View style={kt.grid}>
+            <View style={ko.grid}>
               {round.nums.map(num => {
-                const matchup = bracket.get(num);
-                if (!matchup) return null;
-                return (
-                  <View key={num} style={{ width: CARD_W }}>
-                    <KnockoutMatchupCard
-                      matchup={matchup}
-                      onPick={(code) => onPick(num, code)}
-                    />
-                  </View>
-                );
+                const m = bracket.get(num); if (!m) return null;
+                return <View key={num} style={{ width: CARD_W }}><KnockoutMatchupCard matchup={m} onPick={c => onPick(num, c)} /></View>;
               })}
             </View>
           ) : (
-            <View style={kt.col}>
+            <View style={ko.col}>
               {round.nums.map(num => {
-                const matchup = bracket.get(num);
-                if (!matchup) return null;
-                return (
-                  <KnockoutMatchupCard
-                    key={num}
-                    matchup={matchup}
-                    onPick={(code) => onPick(num, code)}
-                  />
-                );
+                const m = bracket.get(num); if (!m) return null;
+                return <KnockoutMatchupCard key={num} matchup={m} onPick={c => onPick(num, c)} />;
               })}
             </View>
           )}
         </View>
       ))}
-      {/* Champion card */}
-      <View style={kt.championSection}>
-        <View style={kt.roundHeader}>
-          <Text style={kt.roundLabel}>CHAMPION</Text>
-          <View style={kt.roundLine} />
+      <View style={ko.section}>
+        <View style={ko.sectionHeader}>
+          <Text style={ko.sectionLabel}>CHAMPION</Text>
+          <View style={ko.sectionLine} />
         </View>
-        <View style={kt.championCard}>
-          <View style={kt.championInner}>
+        <View style={ko.champCard}>
+          <View style={ko.champInner}>
             <TrophySVG />
             {champion ? (
-              <View style={kt.championTeamRow}>
+              <View style={ko.champRow}>
                 <TeamFlagImage flagUrl={getFlagUrl(champion.code)} width={28} height={18} />
-                <Text style={kt.championName}>{champion.name}</Text>
+                <Text style={ko.champName}>{champion.name}</Text>
               </View>
             ) : (
-              <Text style={kt.championPlaceholder}>Pick your champion above</Text>
+              <Text style={ko.champPlaceholder}>Pick your champion above</Text>
             )}
           </View>
         </View>
@@ -1335,223 +988,420 @@ function KnockoutTab({
   );
 }
 
-const kt = StyleSheet.create({
-  scroll:             { flex: 1 },
-  content:            { paddingTop: 12, paddingBottom: 32, paddingHorizontal: H_PAD },
-  infoBanner:         { backgroundColor: '#EBF4FF', borderRadius: 10, borderWidth: 1, borderColor: '#BFDBFE', paddingHorizontal: 14, paddingVertical: 10, marginBottom: 16 },
-  infoText:           { fontSize: 13, color: '#1D4ED8', fontFamily: fonts.interMedium, letterSpacing: 0.2, lineHeight: 18 },
-  roundSection:       { marginBottom: 24 },
-  roundHeader:        { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
-  roundLabel:         { fontSize: 12, fontFamily: fonts.barlowBold, color: colors.textSecondary, letterSpacing: 2 },
-  roundLine:          { flex: 1, height: 1, backgroundColor: colors.divider },
-  grid:               { flexDirection: 'row', flexWrap: 'wrap', gap: COL_GAP },
-  col:                { gap: 8 },
-  championSection:    { marginBottom: 32 },
-  championCard:       { backgroundColor: colors.card, borderRadius: 14, borderWidth: 1.5, borderColor: colors.accent, shadowColor: colors.accent, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 8, elevation: 3 },
-  championInner:      { alignItems: 'center', paddingVertical: 20, paddingHorizontal: 16, gap: 10 },
-  championTeamRow:    { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  championName:       { fontSize: 22, fontFamily: fonts.barlowBold, color: colors.textPrimary, letterSpacing: 0.3 },
-  championPlaceholder:{ fontSize: 14, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.3 },
+const ko = StyleSheet.create({
+  scroll:         { flex: 1 },
+  content:        { paddingTop: 12, paddingBottom: 32, paddingHorizontal: H_PAD },
+  banner:         { backgroundColor: '#EBF4FF', borderRadius: 10, borderWidth: 1, borderColor: '#BFDBFE', paddingHorizontal: 14, paddingVertical: 10, marginBottom: 16 },
+  bannerText:     { fontSize: 13, color: '#1D4ED8', fontFamily: fonts.interMedium, letterSpacing: 0.2, lineHeight: 18 },
+  section:        { marginBottom: 24 },
+  sectionHeader:  { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
+  sectionLabel:   { fontSize: 12, fontFamily: fonts.barlowBold, color: colors.textSecondary, letterSpacing: 2 },
+  sectionLine:    { flex: 1, height: 1, backgroundColor: colors.divider },
+  grid:           { flexDirection: 'row', flexWrap: 'wrap', gap: COL_GAP },
+  col:            { gap: 8 },
+  champCard:      { backgroundColor: colors.card, borderRadius: 14, borderWidth: 1.5, borderColor: colors.accent, shadowColor: colors.accent, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 8, elevation: 3 },
+  champInner:     { alignItems: 'center', paddingVertical: 20, paddingHorizontal: 16, gap: 10 },
+  champRow:       { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  champName:      { fontSize: 22, fontFamily: fonts.barlowBold, color: colors.textPrimary, letterSpacing: 0.3 },
+  champPlaceholder:{ fontSize: 14, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.3 },
 });
 
-// ── SummaryTab ────────────────────────────────────────────────────────────────
+// ── BracketTab ────────────────────────────────────────────────────────────────
 
-function SummaryTab({
-  groupPicks,
-  knockoutPicks,
+function BracketTab({
+  groupPicks, knockoutPicks, lockedMatchIds, onGroupPick, onGroupReset, onKnockoutPick,
 }: {
   groupPicks: GroupPicks;
   knockoutPicks: Record<number, string>;
+  lockedMatchIds: Set<string>;
+  onGroupPick: (matchId: string, outcome: MatchOutcome) => void;
+  onGroupReset: () => void;
+  onKnockoutPick: (matchNum: number, code: string | null) => void;
 }) {
-  const bracket = useMemo(
-    () => buildKnockout(groupPicks, knockoutPicks),
-    [groupPicks, knockoutPicks],
+  const [section, setSection] = useState<BracketSection>('groups');
+
+  return (
+    <View style={bt.root}>
+      <View style={bt.segWrapper}>
+        {(['groups', 'knockout'] as const).map(s => (
+          <Pressable
+            key={s}
+            style={[bt.seg, section === s && bt.segActive]}
+            onPress={() => setSection(s)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: section === s }}
+          >
+            <Text style={[bt.segText, section === s && bt.segTextActive]}>
+              {s === 'groups' ? 'Groups' : 'Knockout'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {section === 'groups' ? (
+        <GroupsContent
+          picks={groupPicks}
+          lockedMatchIds={lockedMatchIds}
+          onPick={onGroupPick}
+          onReset={onGroupReset}
+        />
+      ) : (
+        <KnockoutContent
+          groupPicks={groupPicks}
+          knockoutPicks={knockoutPicks}
+          onPick={onKnockoutPick}
+        />
+      )}
+    </View>
   );
+}
+
+const bt = StyleSheet.create({
+  root:         { flex: 1, backgroundColor: colors.background },
+  segWrapper:   { flexDirection: 'row', margin: 12, marginBottom: 4, backgroundColor: colors.divider, borderRadius: 10, padding: 2 },
+  seg:          { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
+  segActive:    { backgroundColor: colors.card, shadowColor: '#000', shadowOpacity: 0.08, shadowOffset: { width: 0, height: 1 }, shadowRadius: 2, elevation: 2 },
+  segText:      { fontSize: 14, fontFamily: fonts.barlowBold, color: colors.textMuted, letterSpacing: 0.3 },
+  segTextActive:{ color: colors.textPrimary },
+});
+
+// ── ShareCard (ViewShot target) ───────────────────────────────────────────────
+
+type ShareCardProps = {
+  todayPicks: WC26Match[];
+  dailyPredictions: DailyPredictions;
+  todayLabel: string;
+  champion: KnockoutTeam | null;
+  finalist1: KnockoutTeam | null;
+  finalist2: KnockoutTeam | null;
+  mode: 'daily' | 'bracket';
+};
+
+const ShareCard = React.forwardRef<View, ShareCardProps>(function ShareCard(
+  { todayPicks, dailyPredictions, todayLabel, champion, finalist1, finalist2, mode },
+  ref,
+) {
+  const dateStr = new Date().toLocaleDateString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+  });
+
+  return (
+    <View ref={ref} collapsable={false} style={sc.card}>
+      {/* Header bar */}
+      <View style={sc.headerBar}>
+        <Text style={sc.brand}>FUTBOL26</Text>
+        <Text style={sc.brandDate}>{dateStr}</Text>
+      </View>
+
+      {mode === 'daily' && todayPicks.length > 0 && (
+        <View style={sc.body}>
+          <Text style={sc.sectionTitle}>Today's Picks</Text>
+          {todayPicks.map((m, i) => {
+            const p       = dailyPredictions[m.id]!;
+            const outcome = p.outcome;
+            const winText =
+              outcome === 'home' ? `${m.homeTeam.name} wins` :
+              outcome === 'away' ? `${m.awayTeam.name} wins` : 'Draw';
+            const scoreStr =
+              p.predictedHomeScore != null && p.predictedAwayScore != null
+                ? `  ${p.predictedHomeScore} – ${p.predictedAwayScore}` : '';
+            return (
+              <View key={m.id} style={[sc.pickRow, i > 0 && sc.pickRowBorder]}>
+                <Text style={sc.matchLabel}>
+                  {m.group ? `Group ${m.group} · M${m.matchNumber}` : `M${m.matchNumber}`}
+                </Text>
+                <Text style={sc.matchup}>{m.homeTeam.name} vs {m.awayTeam.name}</Text>
+                <Text style={sc.result}>{winText}{scoreStr}</Text>
+                {!!p.scorerNote && <Text style={sc.detail}>Scorer note: {p.scorerNote}</Text>}
+                {!!p.userNote   && <Text style={sc.detail}>Note: {p.userNote}</Text>}
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {mode === 'bracket' && (
+        <View style={sc.body}>
+          <Text style={sc.sectionTitle}>Full Bracket</Text>
+          {champion && (
+            <View style={sc.pickRow}>
+              <Text style={sc.matchLabel}>Champion</Text>
+              <Text style={sc.result}>{champion.name}</Text>
+            </View>
+          )}
+          {(finalist1 || finalist2) && (
+            <View style={[sc.pickRow, sc.pickRowBorder]}>
+              <Text style={sc.matchLabel}>Final</Text>
+              <Text style={sc.matchup}>{finalist1?.name ?? '?'} vs {finalist2?.name ?? '?'}</Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* CTA */}
+      <View style={sc.ctaRow}>
+        <Text style={sc.ctaText}>
+          {mode === 'daily'
+            ? 'Download FUTBOL26 to view schedules, players, and make your own picks.'
+            : 'Download FUTBOL26 to view schedules, players, and make your own bracket.'}
+        </Text>
+      </View>
+    </View>
+  );
+});
+
+const sc = StyleSheet.create({
+  card:         { backgroundColor: '#FFFFFF', borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: colors.cardBorder },
+  headerBar:    { backgroundColor: colors.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 },
+  brand:        { fontSize: 18, fontFamily: fonts.barlowBold, color: '#FFFFFF', letterSpacing: 1.5 },
+  brandDate:    { fontSize: 12, fontFamily: fonts.interMedium, color: 'rgba(255,255,255,0.8)', letterSpacing: 0.3 },
+  body:         { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 4 },
+  sectionTitle: { fontSize: 14, fontFamily: fonts.barlowBold, color: colors.textNavy, letterSpacing: 1.2, marginBottom: 10 },
+  pickRow:      { paddingVertical: 10 },
+  pickRowBorder:{ borderTopWidth: 1, borderTopColor: colors.divider },
+  matchLabel:   { fontSize: 10, fontFamily: fonts.barlowBold, color: colors.textMuted, letterSpacing: 1, marginBottom: 3 },
+  matchup:      { fontSize: 13, fontFamily: fonts.interMedium, color: colors.textSecondary, letterSpacing: 0.1, marginBottom: 2 },
+  result:       { fontSize: 14, fontFamily: fonts.barlowBold, color: colors.textPrimary, letterSpacing: 0.2 },
+  detail:       { fontSize: 12, fontFamily: fonts.interRegular, color: colors.textSecondary, letterSpacing: 0.1, marginTop: 3 },
+  ctaRow:       { backgroundColor: colors.background, paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.divider },
+  ctaText:      { fontSize: 12, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.2, lineHeight: 17 },
+});
+
+// ── ShareTab ──────────────────────────────────────────────────────────────────
+
+function ShareTab({
+  dailyPredictions, groupPicks, knockoutPicks,
+}: {
+  dailyPredictions: DailyPredictions;
+  groupPicks: GroupPicks;
+  knockoutPicks: Record<number, string>;
+}) {
+  const bracket = useMemo(() => buildKnockout(groupPicks, knockoutPicks), [groupPicks, knockoutPicks]);
+  const { matches: todayMatches, label: todayLabel } = useMemo(getTodayOrNextMatchday, []);
+  const todayPicks = todayMatches.filter(m => dailyPredictions[m.id]?.outcome != null);
 
   const finalMatchup = bracket.get(104);
-  const sf1Matchup   = bracket.get(101);
-  const sf2Matchup   = bracket.get(102);
+  const sf1          = bracket.get(101);
+  const sf2          = bracket.get(102);
+  const champion     = finalMatchup?.winner  ?? null;
+  const finalist1    = finalMatchup?.top     ?? null;
+  const finalist2    = finalMatchup?.bot     ?? null;
 
-  const champion  = finalMatchup?.winner ?? null;
-  const finalist1 = finalMatchup?.top    ?? null;
-  const finalist2 = finalMatchup?.bot    ?? null;
+  const hasDailyPicks = todayPicks.length > 0;
+  const hasBracket    = champion !== null || finalist1 !== null || finalist2 !== null;
 
-  const sfTeams: KnockoutTeam[] = [];
-  if (sf1Matchup?.top)  sfTeams.push(sf1Matchup.top);
-  if (sf1Matchup?.bot)  sfTeams.push(sf1Matchup.bot);
-  if (sf2Matchup?.top)  sfTeams.push(sf2Matchup.top);
-  if (sf2Matchup?.bot)  sfTeams.push(sf2Matchup.bot);
+  const dailyCardRef   = useRef<View>(null);
+  const bracketCardRef = useRef<View>(null);
+  const [isSharing, setIsSharing] = useState(false);
 
-  const hasAnything = champion !== null || finalist1 !== null || finalist2 !== null || sfTeams.length > 0;
-
-  function handleShare() {
-    const lines: string[] = ['My 2026 World Cup Picks', ''];
-    lines.push(`Champion: ${champion?.name ?? '(TBD)'}`);
-    lines.push(`Final: ${finalist1?.name ?? '(TBD)'} vs ${finalist2?.name ?? '(TBD)'}`);
-    if (sfTeams.length > 0) {
-      lines.push('Semifinalists:');
-      sfTeams.forEach(t => lines.push(`  - ${t.name}`));
+  async function handleShareImage(ref: React.RefObject<View | null>, fallbackText: string) {
+    if (isSharing) return;
+    setIsSharing(true);
+    try {
+      // captureRef types predate React 19's RefObject<T|null>; cast is safe
+      const uri       = await captureRef(ref as React.RefObject<View>, { format: 'png', quality: 1 });
+      const available = await Sharing.isAvailableAsync();
+      if (available) {
+        await Sharing.shareAsync(uri, { mimeType: 'image/png', dialogTitle: 'Share My FUTBOL26 Picks', UTI: 'public.png' });
+      } else {
+        Share.share({ message: fallbackText }).catch(() => {});
+      }
+    } catch {
+      Share.share({ message: fallbackText }).catch(() => {});
+    } finally {
+      setIsSharing(false);
     }
-    lines.push('', 'Built with FUTBOL26');
-    Share.share({ message: lines.join('\n') }).catch(() => {});
   }
 
-  if (!hasAnything) {
+  function buildDailyText(): string {
+    const lines = ['My 2026 World Cup Picks', todayLabel, ''];
+    for (const m of todayPicks) {
+      const p = dailyPredictions[m.id]!;
+      const win = p.outcome === 'home' ? `${m.homeTeam.name} wins` : p.outcome === 'away' ? `${m.awayTeam.name} wins` : 'Draw';
+      const score = p.predictedHomeScore != null && p.predictedAwayScore != null ? ` (${p.predictedHomeScore}-${p.predictedAwayScore})` : '';
+      lines.push(`${m.homeTeam.name} vs ${m.awayTeam.name}: ${win}${score}`);
+      if (p.scorerNote) lines.push(`  Scorer note: ${p.scorerNote}`);
+      if (p.userNote)   lines.push(`  Note: ${p.userNote}`);
+    }
+    lines.push('', 'Built with FUTBOL26');
+    return lines.join('\n');
+  }
+
+  function buildBracketText(): string {
+    const lines = ['My 2026 World Cup Bracket', ''];
+    if (champion) lines.push(`Champion: ${champion.name}`);
+    if (finalist1 || finalist2) lines.push(`Final: ${finalist1?.name ?? '?'} vs ${finalist2?.name ?? '?'}`);
+    lines.push('', 'Built with FUTBOL26');
+    return lines.join('\n');
+  }
+
+  if (!hasDailyPicks && !hasBracket) {
     return (
-      <View style={sum.emptyWrap}>
+      <View style={shr.emptyWrap}>
         <TrophySVG />
-        <Text style={sum.emptyTitle}>Make your picks first</Text>
-        <Text style={sum.emptySub}>Fill in the Knockout tab to see your bracket summary</Text>
+        <Text style={shr.emptyTitle}>Nothing to share yet</Text>
+        <Text style={shr.emptySub}>Make picks in Today or Bracket to get started</Text>
       </View>
     );
   }
 
   return (
-    <ScrollView style={sum.scroll} contentContainerStyle={sum.content} showsVerticalScrollIndicator={false}>
-      {/* Predicted Champion */}
-      <View style={sum.card}>
-        <Text style={sum.sectionLabel}>PREDICTED CHAMPION</Text>
-        <View style={sum.divider} />
-        <View style={sum.championContent}>
-          <TrophySVG />
-          {champion ? (
-            <View style={sum.teamRowCentered}>
-              <TeamFlagImage flagUrl={getFlagUrl(champion.code)} width={28} height={18} />
-              <Text style={sum.championName}>{champion.name}</Text>
-            </View>
-          ) : (
-            <Text style={sum.tbd}>Finish bracket to reveal</Text>
-          )}
-        </View>
-      </View>
-
-      {/* Final Matchup */}
-      {(finalist1 !== null || finalist2 !== null) && (
-        <View style={sum.card}>
-          <Text style={sum.sectionLabel}>FINAL MATCHUP</Text>
-          <View style={sum.divider} />
-          <View style={sum.finalRow}>
-            <View style={sum.finalistSide}>
-              {finalist1 ? (
-                <>
-                  <TeamFlagImage flagUrl={getFlagUrl(finalist1.code)} width={28} height={18} />
-                  <Text style={sum.finalistName} numberOfLines={2}>{finalist1.name}</Text>
-                </>
-              ) : (
-                <Text style={sum.tbd}>TBD</Text>
-              )}
-            </View>
-            <Text style={sum.vsText}>vs</Text>
-            <View style={[sum.finalistSide, sum.finalistRight]}>
-              {finalist2 ? (
-                <>
-                  <TeamFlagImage flagUrl={getFlagUrl(finalist2.code)} width={28} height={18} />
-                  <Text style={[sum.finalistName, sum.finalistNameRight]} numberOfLines={2}>{finalist2.name}</Text>
-                </>
-              ) : (
-                <Text style={sum.tbd}>TBD</Text>
-              )}
-            </View>
-          </View>
+    <ScrollView style={shr.scroll} contentContainerStyle={shr.content} showsVerticalScrollIndicator={false}>
+      {hasDailyPicks && (
+        <View style={shr.section}>
+          <Text style={shr.sectionLabel}>TODAY'S PICKS CARD</Text>
+          <ShareCard
+            ref={dailyCardRef}
+            mode="daily"
+            todayPicks={todayPicks}
+            dailyPredictions={dailyPredictions}
+            todayLabel={todayLabel}
+            champion={null}
+            finalist1={null}
+            finalist2={null}
+          />
+          <Pressable
+            style={({ pressed }) => [shr.shareBtn, pressed && shr.shareBtnPressed, isSharing && shr.shareBtnDisabled]}
+            onPress={() => handleShareImage(dailyCardRef, buildDailyText())}
+            disabled={isSharing}
+            accessibilityRole="button"
+            accessibilityLabel="Share today's picks"
+          >
+            <ShareSVG color="#FFFFFF" />
+            <Text style={shr.shareBtnText}>{isSharing ? 'Preparing...' : 'Share My Picks'}</Text>
+          </Pressable>
         </View>
       )}
 
-      {/* Semifinalists */}
-      {sfTeams.length > 0 && (
-        <View style={sum.card}>
-          <Text style={sum.sectionLabel}>SEMIFINALISTS</Text>
-          <View style={sum.divider} />
-          {sfTeams.map((t, i) => (
-            <React.Fragment key={t.code}>
-              {i > 0 && <View style={sum.rowDivider} />}
-              <View style={sum.sfRow}>
-                <TeamFlagImage flagUrl={getFlagUrl(t.code)} width={22} height={14} />
-                <Text style={sum.sfName}>{t.name}</Text>
-              </View>
-            </React.Fragment>
-          ))}
+      {hasBracket && (
+        <View style={shr.section}>
+          <Text style={shr.sectionLabel}>BRACKET CARD</Text>
+          <ShareCard
+            ref={bracketCardRef}
+            mode="bracket"
+            todayPicks={[]}
+            dailyPredictions={dailyPredictions}
+            todayLabel={todayLabel}
+            champion={champion}
+            finalist1={finalist1}
+            finalist2={finalist2}
+          />
+          <Pressable
+            style={({ pressed }) => [shr.shareBtn, pressed && shr.shareBtnPressed, isSharing && shr.shareBtnDisabled]}
+            onPress={() => handleShareImage(bracketCardRef, buildBracketText())}
+            disabled={isSharing}
+            accessibilityRole="button"
+            accessibilityLabel="Share bracket summary"
+          >
+            <ShareSVG color="#FFFFFF" />
+            <Text style={shr.shareBtnText}>{isSharing ? 'Preparing...' : 'Share Full Bracket'}</Text>
+          </Pressable>
         </View>
       )}
 
-      {/* Share button */}
-      <Pressable
-        style={({ pressed }) => [sum.shareBtn, pressed && sum.shareBtnPressed]}
-        onPress={handleShare}
-        accessibilityRole="button"
-        accessibilityLabel="Share my bracket"
-      >
-        <ShareSVG />
-        <Text style={sum.shareBtnText}>Share My Bracket</Text>
-      </Pressable>
+      <Text style={shr.imageNote}>
+        Sharing as an image when available. Falls back to text if image sharing is unavailable.
+      </Text>
     </ScrollView>
   );
 }
 
-const sum = StyleSheet.create({
+const shr = StyleSheet.create({
   scroll:           { flex: 1 },
   content:          { paddingTop: 16, paddingBottom: 32, paddingHorizontal: H_PAD },
   emptyWrap:        { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40, gap: 12 },
   emptyTitle:       { fontSize: 20, fontFamily: fonts.barlowBold, color: colors.textPrimary, textAlign: 'center', letterSpacing: 0.2 },
   emptySub:         { fontSize: 13, fontFamily: fonts.interRegular, color: colors.textMuted, textAlign: 'center', lineHeight: 18, letterSpacing: 0.2 },
-  card:             { backgroundColor: colors.card, borderRadius: 12, borderWidth: 1, borderColor: colors.cardBorder, marginBottom: 16, overflow: 'hidden' },
-  sectionLabel:     { fontSize: 12, fontFamily: fonts.barlowBold, color: colors.textNavy, letterSpacing: 2, paddingHorizontal: 14, paddingTop: 12, paddingBottom: 8 },
-  divider:          { height: 1, backgroundColor: colors.divider },
-  championContent:  { alignItems: 'center', paddingVertical: 20, paddingHorizontal: 16, gap: 10 },
-  teamRowCentered:  { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  championName:     { fontSize: 22, fontFamily: fonts.barlowBold, color: colors.textPrimary, letterSpacing: 0.3 },
-  tbd:              { fontSize: 14, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.3, paddingVertical: 4 },
-  finalRow:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 16, gap: 8 },
-  finalistSide:     { flex: 1, alignItems: 'flex-start', gap: 6 },
-  finalistRight:    { alignItems: 'flex-end' },
-  finalistName:     { fontSize: 14, fontFamily: fonts.interSemi, color: colors.textPrimary, letterSpacing: 0.1 },
-  finalistNameRight:{ textAlign: 'right' },
-  vsText:           { fontSize: 13, fontFamily: fonts.barlowBold, color: colors.textMuted, paddingHorizontal: 4 },
-  rowDivider:       { height: 1, backgroundColor: colors.divider, marginHorizontal: 14 },
-  sfRow:            { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, gap: 10 },
-  sfName:           { flex: 1, fontSize: 14, fontFamily: fonts.interMedium, color: colors.textPrimary, letterSpacing: 0.1 },
-  shareBtn:         { backgroundColor: colors.accent, borderRadius: 12, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 48, marginTop: 8 },
+  section:          { marginBottom: 24, gap: 12 },
+  sectionLabel:     { fontSize: 11, fontFamily: fonts.barlowBold, color: colors.textMuted, letterSpacing: 2 },
+  shareBtn:         { backgroundColor: colors.accent, borderRadius: 12, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 48 },
   shareBtnPressed:  { opacity: 0.8 },
-  shareBtnText:     { fontSize: 16, fontFamily: fonts.barlowBold, color: '#FFFFFF', letterSpacing: 0.4 },
+  shareBtnDisabled: { opacity: 0.5 },
+  shareBtnText:     { fontSize: 15, fontFamily: fonts.barlowBold, color: '#FFFFFF', letterSpacing: 0.4 },
+  imageNote:        { textAlign: 'center', fontSize: 11, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.2, lineHeight: 16 },
 });
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export function MyBracketScreen() {
-  const [subTab, setSubTab] = useState<SubTab>('group-picks');
+  const [subTab, setSubTab] = useState<SubTab>('today');
 
-  // Group picks state
-  const [groupPicks, setGroupPicks]       = useState<GroupPicks>({});
-  const [picksLoading, setPicksLoading]   = useState(true);
+  const [groupPicks,    setGroupPicks]    = useState<GroupPicks>({});
+  const [picksLoading,  setPicksLoading]  = useState(true);
 
-  // Knockout picks state
-  const [knockoutPicks, setKnockoutPicks]         = useState<Record<number, string>>({});
+  const [knockoutPicks,        setKnockoutPicks]        = useState<Record<number, string>>({});
   const [knockoutPicksLoading, setKnockoutPicksLoading] = useState(true);
 
-  // Old bracket state (kept for legacy orphaned components)
-  const [bracket, setBracket]             = useState<Bracket | null>(null);
-  const [bracketLoading, setBracketLoading] = useState(true);
-  const [pickerVisible, setPickerVisible] = useState(false);
-  const [pickerTarget, setPickerTarget]   = useState<PickerTarget | null>(null);
+  const [dailyPredictions, setDailyPredictions] = useState<DailyPredictions>({});
+  const [dailyLoading,     setDailyLoading]     = useState(true);
 
   useEffect(() => {
-    loadGroupPicks().then(gp  => { setGroupPicks(gp);       setPicksLoading(false); });
-    loadKnockoutPicks().then(kp => { setKnockoutPicks(kp);  setKnockoutPicksLoading(false); });
-    loadBracket().then(b       => { setBracket(b);           setBracketLoading(false); });
+    loadGroupPicks().then(gp      => { setGroupPicks(gp);        setPicksLoading(false); });
+    loadKnockoutPicks().then(kp   => { setKnockoutPicks(kp);     setKnockoutPicksLoading(false); });
+    loadDailyPredictions().then(dp => { setDailyPredictions(dp); setDailyLoading(false); });
   }, []);
 
-  // ── Group picks handlers ──────────────────────────────────────────────────
+  const lockedMatchIds = useMemo<Set<string>>(() => {
+    const s = new Set<string>();
+    for (const [id, pred] of Object.entries(dailyPredictions)) {
+      if (pred.lockedAt != null) s.add(id);
+    }
+    return s;
+  }, [dailyPredictions]);
+
+  // ── Daily handlers ────────────────────────────────────────────────────────
+
+  function handleDailyOutcome(matchId: string, outcome: DailyOutcome) {
+    const current    = dailyPredictions[matchId] ?? emptyPrediction(matchId);
+    if (current.lockedAt) return;
+    const newOutcome = current.outcome === outcome ? null : outcome;
+    const next       = { ...dailyPredictions, [matchId]: { ...current, outcome: newOutcome } };
+    setDailyPredictions(next);
+    saveDailyPredictions(next);
+    if (GROUP_STAGE_MATCHES.some(m => m.id === matchId)) {
+      const gNext = { ...groupPicks };
+      if (newOutcome === null) delete gNext[matchId]; else gNext[matchId] = newOutcome;
+      setGroupPicks(gNext);
+      saveGroupPicks(gNext);
+    }
+  }
+
+  function handleDailyScoreChange(matchId: string, field: 'predictedHomeScore' | 'predictedAwayScore', value: string) {
+    const current = dailyPredictions[matchId] ?? emptyPrediction(matchId);
+    if (current.lockedAt) return;
+    let parsed: number | null;
+    if (value === '') { parsed = null; } else { const n = parseInt(value, 10); if (isNaN(n) || n < 0) return; parsed = n; }
+    const next = { ...dailyPredictions, [matchId]: { ...current, [field]: parsed } };
+    setDailyPredictions(next);
+    saveDailyPredictions(next);
+  }
+
+  function handleDailyNoteChange(matchId: string, field: 'scorerNote' | 'userNote', value: string) {
+    const current = dailyPredictions[matchId] ?? emptyPrediction(matchId);
+    if (current.lockedAt) return;
+    const next = { ...dailyPredictions, [matchId]: { ...current, [field]: value } };
+    setDailyPredictions(next);
+    saveDailyPredictions(next);
+  }
+
+  function handleLockToday(matchIds: string[], lock: boolean) {
+    const now  = lock ? new Date().toISOString() : null;
+    const next = { ...dailyPredictions };
+    for (const id of matchIds) {
+      const current = next[id] ?? emptyPrediction(id);
+      next[id] = { ...current, lockedAt: now };
+    }
+    setDailyPredictions(next);
+    saveDailyPredictions(next);
+  }
+
+  // ── Group handlers ────────────────────────────────────────────────────────
 
   function handleGroupPick(matchId: string, outcome: MatchOutcome) {
-    setGroupPicks(prev => {
-      const next = { ...prev };
-      if (next[matchId] === outcome) {
-        delete next[matchId]; // tap same → deselect
-      } else {
-        next[matchId] = outcome;
-      }
-      saveGroupPicks(next);
-      return next;
-    });
+    if (lockedMatchIds.has(matchId)) return;
+    const next = { ...groupPicks };
+    if (next[matchId] === outcome) delete next[matchId]; else next[matchId] = outcome;
+    setGroupPicks(next);
+    saveGroupPicks(next);
   }
 
   function handleGroupReset() {
@@ -1559,66 +1409,17 @@ export function MyBracketScreen() {
     saveGroupPicks({});
   }
 
-  // ── Knockout picks handlers ───────────────────────────────────────────────
+  // ── Knockout handlers ─────────────────────────────────────────────────────
 
   function handleKnockoutPick(matchNum: number, code: string | null) {
-    setKnockoutPicks(prev => {
-      const next = setKnockoutPick(prev, matchNum, code);
-      saveKnockoutPicks(next);
-      return next;
-    });
-  }
-
-  // ── Old knockout bracket handlers (kept for orphaned components) ──────────
-
-  const mutateBracket = useCallback((updater: (b: Bracket) => Bracket) => {
-    setBracket(prev => {
-      if (!prev) return prev;
-      const next = updater(prev);
-      saveBracket(next);
-      return next;
-    });
-  }, []);
-
-  function handleCreate() {
-    const b = emptyBracket();
-    saveBracket(b);
-    setBracket(b);
-  }
-
-  function handleOpenPicker(mIdx: number, slot: 'top' | 'bot') {
-    setPickerTarget({ mIdx, slot });
-    setPickerVisible(true);
-  }
-
-  function handleSelectTeam(team: TeamEntry) {
-    setPickerVisible(false);
-    if (!pickerTarget) return;
-    const { mIdx, slot } = pickerTarget;
-    mutateBracket(b => ({ ...b, picks: setR16Slot(b.picks, mIdx, slot, team) }));
-    setPickerTarget(null);
-  }
-
-  function handleAdvance(round: RoundKey, mIdx: number, winner: TeamEntry) {
-    mutateBracket(b => ({ ...b, picks: advanceWinner(b.picks, round, mIdx, winner) }));
-  }
-
-  function handleLock() {
-    mutateBracket(b => ({ ...b, state: 'locked', lockedAt: new Date().toISOString() }));
-  }
-
-  function handleEditCopy() {
-    mutateBracket(b => ({ ...b, id: Date.now().toString(), state: 'draft', lockedAt: null }));
-  }
-
-  function handleShare() {
-    if (!bracket) return;
-    Share.share({ message: buildShareText(bracket) }).catch(() => {});
+    const next = setKnockoutPick(knockoutPicks, matchNum, code);
+    setKnockoutPicks(next);
+    saveKnockoutPicks(next);
   }
 
   // ── Loading ───────────────────────────────────────────────────────────────
 
-  if (picksLoading || knockoutPicksLoading || bracketLoading) {
+  if (picksLoading || knockoutPicksLoading || dailyLoading) {
     return (
       <View style={s.center}>
         <ActivityIndicator size="small" color={colors.accent} />
@@ -1632,24 +1433,30 @@ export function MyBracketScreen() {
     <View style={s.root}>
       <SubTabBar active={subTab} onPress={setSubTab} />
 
-      {subTab === 'group-picks' && (
-        <GroupPicksTab picks={groupPicks} onPick={handleGroupPick} onReset={handleGroupReset} />
-      )}
-
-      {subTab === 'standings' && (
-        <StandingsTab picks={groupPicks} onReset={handleGroupReset} />
-      )}
-
-      {subTab === 'knockout' && (
-        <KnockoutTab
-          groupPicks={groupPicks}
-          knockoutPicks={knockoutPicks}
-          onPick={handleKnockoutPick}
+      {subTab === 'today' && (
+        <TodayTab
+          dailyPredictions={dailyPredictions}
+          onOutcome={handleDailyOutcome}
+          onScoreChange={handleDailyScoreChange}
+          onNoteChange={handleDailyNoteChange}
+          onLockToggle={handleLockToday}
         />
       )}
 
-      {subTab === 'summary' && (
-        <SummaryTab
+      {subTab === 'bracket' && (
+        <BracketTab
+          groupPicks={groupPicks}
+          knockoutPicks={knockoutPicks}
+          lockedMatchIds={lockedMatchIds}
+          onGroupPick={handleGroupPick}
+          onGroupReset={handleGroupReset}
+          onKnockoutPick={handleKnockoutPick}
+        />
+      )}
+
+      {subTab === 'share' && (
+        <ShareTab
+          dailyPredictions={dailyPredictions}
           groupPicks={groupPicks}
           knockoutPicks={knockoutPicks}
         />
@@ -1664,17 +1471,3 @@ const s = StyleSheet.create({
   root:   { flex: 1, backgroundColor: colors.background },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });
-
-// Keep unused references to prevent tree-shaking of orphaned Phase-1 components
-// (EmptyState, ChampionCard, RoundSection, MatchupCardFull, TeamPickerModal,
-//  LockedBanner, ActionBar, handleCreate, handleOpenPicker, handleSelectTeam,
-//  handleAdvance, handleLock, handleEditCopy, handleShare, pickerTarget,
-//  pickerVisible, bracket — all intentionally retained)
-void (EmptyState as unknown);
-void (ChampionCard as unknown);
-void (RoundSection as unknown);
-void (MatchupCardFull as unknown);
-void (TeamPickerModal as unknown);
-void (LockedBanner as unknown);
-void (ActionBar as unknown);
-void (ComingSoon as unknown);

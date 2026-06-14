@@ -37,11 +37,11 @@ const WATCH_DATA: WatchRegion[] = [
     region: 'USA',
     providers: [
       { name: 'FOX',            language: 'English', priceText: 'Free*',               note: 'Free with antenna where available · FOX One from $19.99/mo' },
-      { name: 'Telemundo',      language: 'Spanish', priceText: 'Free*',               note: 'Free with antenna where available · Peacock from $10.99/mo' },
+      { name: 'Telemundo',      language: 'Spanish', priceText: 'Free*',               note: '92 matches free over-the-air on Telemundo where available; 12 on Universo; all 104 on Peacock' },
       { name: 'FS1 / FS2',      language: 'English', priceText: 'From $19.99/mo',      note: 'FOX One from $19.99/mo · or TV provider' },
       { name: 'Universo',       language: 'Spanish', priceText: 'From $10.99/mo',      note: 'Peacock from $10.99/mo · or TV provider' },
       { name: 'Peacock',        language: 'English', priceText: 'From $10.99/mo',      note: 'From $10.99/mo' },
-      { name: 'ViX',            language: 'Spanish', priceText: 'Free',                note: 'Free with ads · ViX+ price varies' },
+      // { name: 'ViX',            language: 'Spanish', priceText: 'Free',                note: 'Free with ads · ViX+ price varies' },
       { name: 'YouTube TV',     language: 'English', priceText: 'From $72.99/mo',      note: 'From $72.99/mo' },
       { name: 'Hulu Live TV',   language: 'English', priceText: 'From $82.99/mo',      note: 'From $82.99/mo' },
       { name: 'FuboTV',         language: 'English', priceText: 'From $84.99/mo',      note: 'From $84.99/mo' },
@@ -56,7 +56,7 @@ const WATCH_DATA: WatchRegion[] = [
       { name: 'Noovo',      language: 'French',  priceText: 'Free Broadcast',    note: 'Select French matches · Free over-the-air where available' },
       { name: 'TSN',        language: 'English', priceText: 'Paid Subscription', note: 'All 104 matches · Paid TV/streaming subscription' },
       { name: 'RDS / RDS2', language: 'French',  priceText: 'Paid Subscription', note: 'All 104 matches in French · Paid TV/streaming subscription' },
-      { name: 'Crave',      language: 'English', priceText: 'Paid Subscription', note: 'Select CTV live coverage · Requires Crave subscription' },
+      { name: 'Crave',      language: 'English', priceText: 'Paid Subscription', note: 'Select CTV simulcasts through Crave' },
     ],
   },
   {
@@ -64,14 +64,14 @@ const WATCH_DATA: WatchRegion[] = [
     providers: [
       { name: 'Canal 5 / Las Estrellas', language: 'Spanish', priceText: 'Free Broadcast',          note: 'Selected matches · Free broadcast TV' },
       { name: 'Azteca 7',                language: 'Spanish', priceText: 'Free Broadcast',          note: 'Selected matches · Free broadcast TV' },
-      { name: 'ViX',                     language: 'Spanish', priceText: 'Limited Free + Paid Pass', note: '32 matches free · All 104 with Pase Mundial from 499 MXN · annual Premium may include access' },
+      { name: 'ViX',                     language: 'Spanish', priceText: 'Limited Free + Paid Pass', note: 'All 104 with ViX Pase Mundial; public price/promo varies, shown by ViX' },
       { name: 'TUDN',                    language: 'Spanish', priceText: 'Paid Access',              note: 'Paid TV/streaming access where available' },
     ],
   },
   {
     region: 'Global',
     providers: [
-      { name: 'FIFA+', language: 'Multiple', priceText: 'Varies by Country', note: 'Highlights/news · Live availability varies by country' },
+      { name: 'FIFA+', language: 'Multiple', priceText: 'Varies by Country', note: 'Highlights, news, and selected live content; availability varies by country' },
     ],
   },
 ];
@@ -184,7 +184,7 @@ export function WatchSheet({ onClose }: { onClose: () => void }) {
             <Text style={ws.footnote}>
               * Free broadcast channels may require antenna/local availability. Streaming prices subject to change.
             </Text>
-            <Text style={ws.source}>Source: FIFA Media · Updated Jun 2026</Text>
+            <Text style={ws.source}>Sources: FIFA/rightsholder announcements · Prices subject to change.</Text>
           </View>
         </ScrollView>
       </Animated.View>

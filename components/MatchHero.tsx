@@ -10,27 +10,43 @@ interface MatchHeroProps {
 }
 
 export function MatchHero({ match }: MatchHeroProps) {
+  const isFinal  = match.status === 'final';
+  const isLive   = match.status === 'live';
+  const hasScore = match.score !== null;
+  const showScore = (isFinal || isLive) && hasScore;
+
   return (
     <View style={styles.container}>
-      {/* Stage · Match label — uses the pre-built label from match data */}
       <Text style={styles.matchLabel}>{match.label.toUpperCase()}</Text>
 
-      {/* 3-column matchup row */}
       <View style={styles.row}>
-        {/* Team A */}
         <TeamFlagColumn team={match.teamA} />
 
-        {/* Center: VS / time / venue */}
         <View style={styles.center}>
-          <Text style={styles.vs}>VS</Text>
-          <Text style={styles.time}>{match.time}</Text>
-          <Text style={styles.venue} numberOfLines={2}>
-            {match.venue}
-          </Text>
+          {showScore ? (
+            <>
+              {isLive && (
+                <View style={styles.liveBadge}>
+                  <Text style={styles.liveBadgeText}>LIVE</Text>
+                </View>
+              )}
+              <View style={styles.scoreRow}>
+                <Text style={styles.scoreNum}>{match.score!.teamA}</Text>
+                <Text style={styles.scoreSep}>–</Text>
+                <Text style={styles.scoreNum}>{match.score!.teamB}</Text>
+              </View>
+              {isFinal && <Text style={styles.ftLabel}>Full Time</Text>}
+            </>
+          ) : (
+            <>
+              <Text style={styles.vs}>VS</Text>
+              <Text style={styles.time}>{match.time}</Text>
+            </>
+          )}
+          <Text style={styles.venue} numberOfLines={2}>{match.venue}</Text>
           <Text style={styles.city}>{match.city}</Text>
         </View>
 
-        {/* Team B */}
         <TeamFlagColumn team={match.teamB} />
       </View>
     </View>
@@ -85,12 +101,50 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 5,
   },
+  scoreRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  scoreNum: {
+    fontSize: 36,
+    fontFamily: fonts.barlowBold,
+    color: colors.textPrimary,
+    letterSpacing: 1,
+  },
+  scoreSep: {
+    fontSize: 28,
+    fontFamily: fonts.barlowBold,
+    color: colors.textMuted,
+    letterSpacing: 1,
+  },
+  ftLabel: {
+    fontSize: 10,
+    fontFamily: fonts.barlowSemi,
+    color: colors.textMuted,
+    letterSpacing: 1.2,
+    marginTop: 2,
+  },
+  liveBadge: {
+    backgroundColor: colors.liveRed,
+    borderRadius: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    marginBottom: 4,
+  },
+  liveBadgeText: {
+    fontSize: 10,
+    fontFamily: fonts.barlowBold,
+    color: '#FFFFFF',
+    letterSpacing: 1.5,
+  },
   venue: {
     fontSize: 10,
     fontFamily: fonts.interRegular,
     color: colors.textMuted,
     textAlign: 'center',
     letterSpacing: 0.2,
+    marginTop: 6,
   },
   city: {
     fontSize: 10,

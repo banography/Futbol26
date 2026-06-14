@@ -1,14 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo } from 'react';
+import Svg, { Path } from 'react-native-svg';
 import {
-  View,
+  ActivityIndicator,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  ActivityIndicator,
-  SafeAreaView,
-  Pressable,
+  View,
 } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+
+import { MatchHero } from '../../components/MatchHero';
+import { ProjectedXIToggle } from '../../components/ProjectedXIToggle';
+import { colors } from '../../constants/colors';
+import { fonts } from '../../constants/typography';
+import { useMatchData } from '../../services/matchDataService';
+import { adaptMatchForDisplay } from '../../services/futbolApi';
 
 function IconBack() {
   return (
@@ -24,56 +32,30 @@ function IconBack() {
     </Svg>
   );
 }
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { MatchHero } from '../../components/MatchHero';
-import { ProjectedXIToggle } from '../../components/ProjectedXIToggle';
-import { getMatchById } from '../../services/futbolApi';
-import { Match } from '../../types/match';
-import { colors } from '../../constants/colors';
-import { fonts } from '../../constants/typography';
 
 export default function MatchDetailScreen() {
   const { matchId } = useLocalSearchParams<{ matchId: string }>();
   const router = useRouter();
 
-  const [match, setMatch]       = useState<Match | null>(null);
-  const [loading, setLoading]   = useState(true);
-  const [fetchError, setError]  = useState<string | null>(null);
+  const { matches, loading } = useMatchData();
+  const deviceTz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
 
-  useEffect(() => {
-    if (!matchId) {
-      setLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-
-    getMatchById(matchId)
-      .then((m) => {
-        if (!cancelled) {
-          setMatch(m);
-          setLoading(false);
-        }
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load match');
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [matchId]);
+  const match = useMemo(() => {
+    if (!matchId) return null;
+    const raw = matches.find(m => m.id === matchId);
+    return raw ? adaptMatchForDisplay(raw, deviceTz) : null;
+  }, [matches, matchId, deviceTz]);
 
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.root}>
         <View style={styles.header}>
-          <Pressable style={styles.backBtn} onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Go back">
+          <Pressable
+            style={styles.backBtn}
+            onPress={() => router.back()}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
             <IconBack />
           </Pressable>
         </View>
@@ -81,10 +63,6 @@ export default function MatchDetailScreen() {
         {loading ? (
           <View style={styles.centerBox}>
             <ActivityIndicator color={colors.accent} size="large" />
-          </View>
-        ) : fetchError !== null ? (
-          <View style={styles.centerBox}>
-            <Text style={styles.errorText}>{fetchError}</Text>
           </View>
         ) : match === null ? (
           <View style={styles.centerBox}>

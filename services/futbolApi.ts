@@ -40,7 +40,7 @@ function adaptTeam(team: WC26Team): AppMatch['teamA'] {
 
 // Derive the local calendar date (YYYY-MM-DD) in a given timezone so that
 // late-UTC kickoffs (e.g. 03:00 UTC = previous evening ET) group correctly.
-function toLocalDate(dateUtc: string, tz = 'America/New_York'): string {
+function toLocalDate(dateUtc: string, tz: string): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,
     year:     'numeric',
@@ -49,18 +49,17 @@ function toLocalDate(dateUtc: string, tz = 'America/New_York'): string {
   }).format(new Date(dateUtc));
 }
 
-function adaptMatch(m: WC26Match): AppMatch {
-  const date  = toLocalDate(m.dateUtc);
-  const time  = formatMatchTime(m.dateUtc, 'America/New_York');
-  const label = m.group
-    ? `Group ${m.group} · Match ${m.matchNumber}`
-    : `${m.stage} · Match ${m.matchNumber}`;
+const DEVICE_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+/** Adapt a raw WC26Match to the display AppMatch for a given timezone. */
+export function adaptMatchForDisplay(m: WC26Match, tz: string): AppMatch {
   return {
     id:          m.id,
-    date,
-    label,
-    time,
+    date:        toLocalDate(m.dateUtc, tz),
+    label:       m.group
+      ? `Group ${m.group} · Match ${m.matchNumber}`
+      : `${m.stage} · Match ${m.matchNumber}`,
+    time:        formatMatchTime(m.dateUtc, tz),
     group:       m.group ?? '',
     matchNumber: m.matchNumber,
     teamA:       adaptTeam(m.homeTeam),
@@ -76,8 +75,8 @@ function adaptMatch(m: WC26Match): AppMatch {
   };
 }
 
-// Adapt once at module load; individual service calls just filter this array.
-const ADAPTED_MATCHES: AppMatch[] = WC26_MATCHES.map(adaptMatch);
+// Adapt once at module load using device timezone for the legacy API path.
+const ADAPTED_MATCHES: AppMatch[] = WC26_MATCHES.map(m => adaptMatchForDisplay(m, DEVICE_TZ));
 
 // ── Public helpers ────────────────────────────────────────────────────────────
 

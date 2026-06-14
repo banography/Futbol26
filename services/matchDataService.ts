@@ -79,3 +79,8 @@ export function useMatchData(): MatchDataResult {
 
   return { matches, loading, error, refetch };
 }
+
+/** Read the current match data (remote cache if loaded, otherwise bundled) by ID. */
+export function getMatchByIdRaw(id: string): WC26Match | null {
+  return (_cache ?? WC26_MATCHES).find(m => m.id === id) ?? null;
+}
