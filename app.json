@@ -1,6 +1,5 @@
 {
   "expo": {
-    "newArchEnabled": true,
     "name": "Futbol26",
     "slug": "futbol26",
     "scheme": "futbol26",
@@ -8,13 +7,8 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "cover",
-      "backgroundColor": "#0f0f1e"
-    },
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.bani.futbol26",
       "buildNumber": "1",
       "infoPlist": {
@@ -35,7 +29,15 @@
     },
     "plugins": [
       "expo-router",
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0f0f1e",
+          "image": "./assets/splash.png",
+          "resizeMode": "cover"
+        }
+      ]
     ],
     "extra": {
       "router": {},

@@ -66,7 +66,7 @@ export function useMatchData(): MatchDataResult {
       .catch((err: unknown) => {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn('[matchDataService] Falling back to bundled data:', msg);
+        if (__DEV__) console.warn('[matchDataService] Falling back to bundled data:', msg);
         setMatches(WC26_MATCHES);
         setError(msg);
       })
