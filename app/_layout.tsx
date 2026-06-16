@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -14,8 +14,13 @@ import {
   Inter_500Medium,
   Inter_600SemiBold,
 } from '@expo-google-fonts/inter';
+import { LaunchIntro } from '../components/LaunchIntro';
 
 SplashScreen.preventAutoHideAsync();
+
+// Module-level flag: true after the first cold launch completes the intro.
+// Survives re-renders; resets only on a true cold restart of the JS engine.
+let _introShown = false;
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
@@ -27,9 +32,15 @@ export default function RootLayout() {
     Inter_600SemiBold,
   });
 
+  const [introVisible, setIntroVisible] = useState(false);
+
   useEffect(() => {
     if (fontsLoaded || fontError) {
       SplashScreen.hideAsync();
+      if (!_introShown) {
+        _introShown = true;
+        setIntroVisible(true);
+      }
     }
   }, [fontsLoaded, fontError]);
 
@@ -39,8 +50,12 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <StatusBar style="dark" />
+      {/* Light status bar during intro (black bg); dark thereafter (light app bg) */}
+      <StatusBar style={introVisible ? 'light' : 'dark'} />
       <Stack screenOptions={{ headerShown: false, gestureEnabled: true }} />
+      {introVisible && (
+        <LaunchIntro onDone={() => setIntroVisible(false)} />
+      )}
     </SafeAreaProvider>
   );
 }
