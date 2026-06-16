@@ -626,9 +626,9 @@ const gsc = StyleSheet.create({
 
 // ── StandingsRow ──────────────────────────────────────────────────────────────
 
-function StandingsRow({ stat, rank }: { stat: TeamStats; rank: number }) {
-  const advances = rank <= 2;
-  const wildcard = rank === 3;
+function StandingsRow({ stat, rank, showQualification }: { stat: TeamStats; rank: number; showQualification: boolean }) {
+  const advances = showQualification && rank <= 2;
+  const wildcard = showQualification && rank === 3;
   return (
     <View style={[sdr.row, advances && sdr.rowAdvances, wildcard && sdr.rowWildcard]}>
       {advances && <View style={sdr.stripeGreen} />}
@@ -666,8 +666,9 @@ const sdr = StyleSheet.create({
 // ── GroupStandingsSection ─────────────────────────────────────────────────────
 
 function GroupStandingsSection({ group, picks }: { group: string; picks: GroupPicks }) {
-  const matches   = getGroupMatches(group);
-  const standings = computeStandings(matches, picks);
+  const matches      = getGroupMatches(group);
+  const standings    = computeStandings(matches, picks);
+  const hasAnyPicks  = standings.some(s => s.played > 0);
   return (
     <View style={gss.container}>
       <View style={gss.header}>
@@ -679,12 +680,12 @@ function GroupStandingsSection({ group, picks }: { group: string; picks: GroupPi
           <Text style={gss.colTeam}>Team</Text>
           <Text style={gss.colNum}>W</Text><Text style={gss.colNum}>D</Text><Text style={gss.colNum}>L</Text>
           <Text style={gss.colPts}>Pts</Text>
-          <View style={{ width: 72 }} />
+          {hasAnyPicks && <View style={{ width: 72 }} />}
         </View>
         {standings.map((stat, i) => (
           <React.Fragment key={stat.code}>
             {i > 0 && <View style={gss.divider} />}
-            <StandingsRow stat={stat} rank={i + 1} />
+            <StandingsRow stat={stat} rank={i + 1} showQualification={hasAnyPicks} />
           </React.Fragment>
         ))}
       </View>
