@@ -1153,7 +1153,7 @@ const ShareCard = React.forwardRef<View, ShareCardProps>(function ShareCard(
 
       {/* CTA */}
       <View style={sc.ctaRow}>
-        <Text style={sc.ctaText}>Download FUTBOL26 to make your picks.</Text>
+        <Text style={sc.ctaText}>Download Futbol26 to make your picks.</Text>
       </View>
     </View>
   );
@@ -1212,7 +1212,7 @@ function ShareTab({
       const uri       = await captureRef(ref as React.RefObject<View>, { format: 'png', quality: 1 });
       const available = await Sharing.isAvailableAsync();
       if (available) {
-        await Sharing.shareAsync(uri, { mimeType: 'image/png', dialogTitle: 'Share My FUTBOL26 Picks', UTI: 'public.png' });
+        await Sharing.shareAsync(uri, { mimeType: 'image/png', dialogTitle: 'Share My Futbol26 Picks', UTI: 'public.png' });
       } else {
         Share.share({ message: fallbackText }).catch(() => {});
       }
@@ -1233,7 +1233,7 @@ function ShareTab({
       if (p.scorerNote) lines.push(`  Scorer note: ${p.scorerNote}`);
       if (p.userNote)   lines.push(`  Note: ${p.userNote}`);
     }
-    lines.push('', 'Built with FUTBOL26');
+    lines.push('', 'Built with Futbol26');
     return lines.join('\n');
   }
 
@@ -1241,7 +1241,7 @@ function ShareTab({
     const lines = ['My 2026 World Cup Bracket', ''];
     if (champion) lines.push(`Champion: ${champion.name}`);
     if (finalist1 || finalist2) lines.push(`Final: ${finalist1?.name ?? '?'} vs ${finalist2?.name ?? '?'}`);
-    lines.push('', 'Built with FUTBOL26');
+    lines.push('', 'Built with Futbol26');
     return lines.join('\n');
   }
 

@@ -99,6 +99,11 @@ export function MatchCard({ match, onPress }: MatchCardProps) {
           {isFinal && <Text style={styles.finalScore}>{match.score!.teamB}</Text>}
         </View>
       </View>
+
+      {/* Tap affordance */}
+      <View style={styles.detailsCue}>
+        <Text style={styles.detailsText}> ›</Text>
+      </View>
     </Pressable>
   );
 }
@@ -197,6 +202,16 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     letterSpacing: 3,
     paddingHorizontal: 8,
+  },
+  detailsCue: {
+    alignItems: 'flex-end',
+    marginTop: 10,
+  },
+  detailsText: {
+    fontSize: 11,
+    fontFamily: fonts.interMedium,
+    color: colors.textMuted,
+    letterSpacing: 0.4,
   },
   // Live center
   liveCenter: {
