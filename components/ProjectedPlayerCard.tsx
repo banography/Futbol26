@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import Svg, { Path } from 'react-native-svg';
@@ -34,7 +34,7 @@ interface PlayerCardProps {
   isLast?: boolean;
 }
 
-export function ProjectedPlayerCard({ player, teamFlag, isLast = false }: PlayerCardProps) {
+export const ProjectedPlayerCard = React.memo(function ProjectedPlayerCard({ player, teamFlag, isLast = false }: PlayerCardProps) {
   const router = useRouter();
   const [photoFailed, setPhotoFailed] = useState(false);
   const showSilhouette = !player.photoUrl || photoFailed;
@@ -85,7 +85,7 @@ export function ProjectedPlayerCard({ player, teamFlag, isLast = false }: Player
       {!isLast && <View style={styles.separator} />}
     </>
   );
-}
+});
 
 const styles = StyleSheet.create({
   card: {

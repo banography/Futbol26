@@ -14,7 +14,7 @@ import {
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 import { captureRef } from 'react-native-view-shot';
 import * as Sharing from 'expo-sharing';
-import { colors } from '../constants/colors';
+import { colors, PALETTE } from '../constants/colors';
 import { fonts } from '../constants/typography';
 import { TeamFlagImage } from '../components/TeamFlagImage';
 import { getFlagUrl } from '../services/futbolApi';
@@ -1078,7 +1078,7 @@ type ShareCardProps = {
 };
 
 const ShareCard = React.forwardRef<View, ShareCardProps>(function ShareCard(
-  { todayPicks, dailyPredictions, todayLabel, champion, finalist1, finalist2, mode },
+  { todayPicks, dailyPredictions, champion, finalist1, finalist2, mode },
   ref,
 ) {
   const dateStr = new Date().toLocaleDateString('en-US', {
@@ -1087,7 +1087,14 @@ const ShareCard = React.forwardRef<View, ShareCardProps>(function ShareCard(
 
   return (
     <View ref={ref} collapsable={false} style={sc.card}>
-      {/* Header bar */}
+      {/* Multicolor ribbon */}
+      <View style={sc.ribbon}>
+        {PALETTE.map((color, i) => (
+          <View key={i} style={[sc.ribbonBlock, { backgroundColor: color }]} />
+        ))}
+      </View>
+
+      {/* Dark header */}
       <View style={sc.headerBar}>
         <Text style={sc.brand}>FUTBOL26</Text>
         <Text style={sc.brandDate}>{dateStr}</Text>
@@ -1104,16 +1111,22 @@ const ShareCard = React.forwardRef<View, ShareCardProps>(function ShareCard(
               outcome === 'away' ? `${m.awayTeam.name} wins` : 'Draw';
             const scoreStr =
               p.predictedHomeScore != null && p.predictedAwayScore != null
-                ? `  ${p.predictedHomeScore} – ${p.predictedAwayScore}` : '';
+                ? `  ${p.predictedHomeScore}–${p.predictedAwayScore}` : '';
             return (
               <View key={m.id} style={[sc.pickRow, i > 0 && sc.pickRowBorder]}>
                 <Text style={sc.matchLabel}>
-                  {m.group ? `Group ${m.group} · M${m.matchNumber}` : `M${m.matchNumber}`}
+                  {m.group ? `GROUP ${m.group}  ·  M${m.matchNumber}` : `M${m.matchNumber}`}
                 </Text>
-                <Text style={sc.matchup}>{m.homeTeam.name} vs {m.awayTeam.name}</Text>
+                <View style={sc.matchupRow}>
+                  <TeamFlagImage flagUrl={getFlagUrl(m.homeTeam.code)} width={18} height={12} />
+                  <Text style={sc.matchup} numberOfLines={1}>
+                    {m.homeTeam.name} vs {m.awayTeam.name}
+                  </Text>
+                  <TeamFlagImage flagUrl={getFlagUrl(m.awayTeam.code)} width={18} height={12} />
+                </View>
                 <Text style={sc.result}>{winText}{scoreStr}</Text>
-                {!!p.scorerNote && <Text style={sc.detail}>Scorer note: {p.scorerNote}</Text>}
-                {!!p.userNote   && <Text style={sc.detail}>Note: {p.userNote}</Text>}
+                {!!p.scorerNote && <Text style={sc.detail}>Scorer: {p.scorerNote}</Text>}
+                {!!p.userNote   && <Text style={sc.detail}>{p.userNote}</Text>}
               </View>
             );
           })}
@@ -1122,16 +1135,16 @@ const ShareCard = React.forwardRef<View, ShareCardProps>(function ShareCard(
 
       {mode === 'bracket' && (
         <View style={sc.body}>
-          <Text style={sc.sectionTitle}>Full Bracket</Text>
+          <Text style={sc.sectionTitle}>My Bracket</Text>
           {champion && (
             <View style={sc.pickRow}>
-              <Text style={sc.matchLabel}>Champion</Text>
+              <Text style={sc.matchLabel}>CHAMPION</Text>
               <Text style={sc.result}>{champion.name}</Text>
             </View>
           )}
           {(finalist1 || finalist2) && (
             <View style={[sc.pickRow, sc.pickRowBorder]}>
-              <Text style={sc.matchLabel}>Final</Text>
+              <Text style={sc.matchLabel}>FINAL</Text>
               <Text style={sc.matchup}>{finalist1?.name ?? '?'} vs {finalist2?.name ?? '?'}</Text>
             </View>
           )}
@@ -1140,11 +1153,7 @@ const ShareCard = React.forwardRef<View, ShareCardProps>(function ShareCard(
 
       {/* CTA */}
       <View style={sc.ctaRow}>
-        <Text style={sc.ctaText}>
-          {mode === 'daily'
-            ? 'Download FUTBOL26 to view schedules, players, and make your own picks.'
-            : 'Download FUTBOL26 to view schedules, players, and make your own bracket.'}
-        </Text>
+        <Text style={sc.ctaText}>Download FUTBOL26 to make your picks.</Text>
       </View>
     </View>
   );
@@ -1152,17 +1161,20 @@ const ShareCard = React.forwardRef<View, ShareCardProps>(function ShareCard(
 
 const sc = StyleSheet.create({
   card:         { backgroundColor: '#FFFFFF', borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: colors.cardBorder },
-  headerBar:    { backgroundColor: colors.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 },
+  ribbon:       { flexDirection: 'row', height: 5 },
+  ribbonBlock:  { flex: 1 },
+  headerBar:    { backgroundColor: colors.textPrimary, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 },
   brand:        { fontSize: 18, fontFamily: fonts.barlowBold, color: '#FFFFFF', letterSpacing: 1.5 },
-  brandDate:    { fontSize: 12, fontFamily: fonts.interMedium, color: 'rgba(255,255,255,0.8)', letterSpacing: 0.3 },
+  brandDate:    { fontSize: 12, fontFamily: fonts.interMedium, color: 'rgba(255,255,255,0.55)', letterSpacing: 0.3 },
   body:         { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 4 },
-  sectionTitle: { fontSize: 14, fontFamily: fonts.barlowBold, color: colors.textNavy, letterSpacing: 1.2, marginBottom: 10 },
+  sectionTitle: { fontSize: 11, fontFamily: fonts.barlowBold, color: colors.textMuted, letterSpacing: 2, marginBottom: 10 },
   pickRow:      { paddingVertical: 10 },
   pickRowBorder:{ borderTopWidth: 1, borderTopColor: colors.divider },
-  matchLabel:   { fontSize: 10, fontFamily: fonts.barlowBold, color: colors.textMuted, letterSpacing: 1, marginBottom: 3 },
-  matchup:      { fontSize: 13, fontFamily: fonts.interMedium, color: colors.textSecondary, letterSpacing: 0.1, marginBottom: 2 },
+  matchLabel:   { fontSize: 10, fontFamily: fonts.barlowBold, color: colors.textMuted, letterSpacing: 1, marginBottom: 4 },
+  matchupRow:   { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
+  matchup:      { flex: 1, fontSize: 13, fontFamily: fonts.interMedium, color: colors.textSecondary, letterSpacing: 0.1 },
   result:       { fontSize: 14, fontFamily: fonts.barlowBold, color: colors.textPrimary, letterSpacing: 0.2 },
-  detail:       { fontSize: 12, fontFamily: fonts.interRegular, color: colors.textSecondary, letterSpacing: 0.1, marginTop: 3 },
+  detail:       { fontSize: 11, fontFamily: fonts.interRegular, color: colors.textSecondary, letterSpacing: 0.1, marginTop: 2 },
   ctaRow:       { backgroundColor: colors.background, paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.divider },
   ctaText:      { fontSize: 12, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.2, lineHeight: 17 },
 });
@@ -1181,8 +1193,6 @@ function ShareTab({
   const todayPicks = todayMatches.filter(m => dailyPredictions[m.id]?.outcome != null);
 
   const finalMatchup = bracket.get(104);
-  const sf1          = bracket.get(101);
-  const sf2          = bracket.get(102);
   const champion     = finalMatchup?.winner  ?? null;
   const finalist1    = finalMatchup?.top     ?? null;
   const finalist2    = finalMatchup?.bot     ?? null;
@@ -1239,8 +1249,8 @@ function ShareTab({
     return (
       <View style={shr.emptyWrap}>
         <TrophySVG />
-        <Text style={shr.emptyTitle}>Nothing to share yet</Text>
-        <Text style={shr.emptySub}>Make picks in Today or Bracket to get started</Text>
+        <Text style={shr.emptyTitle}>No picks yet</Text>
+        <Text style={shr.emptySub}>Make a pick on Today to generate your share card.</Text>
       </View>
     );
   }
@@ -1314,7 +1324,7 @@ const shr = StyleSheet.create({
   emptySub:         { fontSize: 13, fontFamily: fonts.interRegular, color: colors.textMuted, textAlign: 'center', lineHeight: 18, letterSpacing: 0.2 },
   section:          { marginBottom: 24, gap: 12 },
   sectionLabel:     { fontSize: 11, fontFamily: fonts.barlowBold, color: colors.textMuted, letterSpacing: 2 },
-  shareBtn:         { backgroundColor: colors.accent, borderRadius: 12, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 48 },
+  shareBtn:         { backgroundColor: colors.neutralSelected, borderRadius: 12, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 48 },
   shareBtnPressed:  { opacity: 0.8 },
   shareBtnDisabled: { opacity: 0.5 },
   shareBtnText:     { fontSize: 15, fontFamily: fonts.barlowBold, color: '#FFFFFF', letterSpacing: 0.4 },

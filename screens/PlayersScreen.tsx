@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -48,7 +48,8 @@ const POSITION_LABELS: Record<PositionCode, string> = {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type SearchPlayer = Player & { teamCode: string; teamName: string };
+type SearchPlayer = Player & { teamCode: string; teamName: string; searchKey: string };
+type SearchableSquad = { squad: Squad; nameKey: string; codeKey: string };
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -102,6 +103,18 @@ function IconChevronLeft() {
       />
     </Svg>
   );
+}
+
+// ── Debounce hook ─────────────────────────────────────────────────────────────
+
+function useDebounce(value: string, delay: number): string {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    if (!value) { setDebounced(''); return; }
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
 }
 
 // ── CountryRow ────────────────────────────────────────────────────────────────
@@ -220,27 +233,36 @@ export function PlayersScreen() {
           ...p,
           teamCode: squad.teamCode,
           teamName: squad.teamName,
+          searchKey: p.fullName.toLowerCase(),
         })),
       ),
     [],
   );
 
+  const searchableSquads = useMemo<SearchableSquad[]>(
+    () => sortedSquads.map((s) => ({
+      squad: s,
+      nameKey: s.teamName.toLowerCase(),
+      codeKey: s.teamCode.toLowerCase(),
+    })),
+    [sortedSquads],
+  );
+
   // ── Derived
-  const trimmedSearch = search.trim();
+  const trimmedSearch   = search.trim();
+  const debouncedQuery  = useDebounce(trimmedSearch, 150);
 
   const searchCountries = useMemo<Squad[]>(() => {
-    const q = trimmedSearch.toLowerCase();
-    if (!q) return [];
-    return sortedSquads.filter(
-      (s) => s.teamName.toLowerCase().startsWith(q) || s.teamCode.toLowerCase().startsWith(q),
-    );
-  }, [sortedSquads, trimmedSearch]);
+    if (!debouncedQuery) return [];
+    return searchableSquads
+      .filter((ss) => ss.nameKey.startsWith(debouncedQuery) || ss.codeKey.startsWith(debouncedQuery))
+      .map((ss) => ss.squad);
+  }, [searchableSquads, debouncedQuery]);
 
   const searchPlayers = useMemo<SearchPlayer[]>(() => {
-    const q = trimmedSearch.toLowerCase();
-    if (!q) return [];
-    return allPlayers.filter((p) => p.fullName.toLowerCase().includes(q));
-  }, [allPlayers, trimmedSearch]);
+    if (!debouncedQuery) return [];
+    return allPlayers.filter((p) => p.searchKey.includes(debouncedQuery));
+  }, [allPlayers, debouncedQuery]);
 
   const selectedSquad = selectedCode ? (SQUADS[selectedCode] ?? null) : null;
 
@@ -265,7 +287,7 @@ export function PlayersScreen() {
   );
 
   // ── View state: roster overrides everything when a country is selected
-  const view = selectedCode ? 'roster' : trimmedSearch ? 'search' : 'countries';
+  const view = selectedCode ? 'roster' : debouncedQuery ? 'search' : 'countries';
 
   return (
     <View style={s.root}>
@@ -333,7 +355,7 @@ export function PlayersScreen() {
         >
           {searchCountries.length === 0 && searchPlayers.length === 0 ? (
             <View style={s.emptyState}>
-              <Text style={s.emptyTitle}>No results for "{trimmedSearch}"</Text>
+              <Text style={s.emptyTitle}>No results for "{debouncedQuery}"</Text>
               <Text style={s.emptyHint}>Try a different spelling</Text>
             </View>
           ) : (
