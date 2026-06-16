@@ -5,9 +5,9 @@ import {
   Pressable,
   StyleSheet,
   Linking,
-  SafeAreaView,
   Dimensions,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, {
   Defs,
   RadialGradient,
