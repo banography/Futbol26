@@ -1,8 +1,4 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// CANONICAL WORLD CUP 2026 MATCH DATA — All 104 official FIFA fixtures
-// Source: Official FIFA fixture list (fifa.com, published 9 Jun 2026). Times in UTC.
-// Do NOT edit manually — update only when FIFA changes an official fixture.
-//
 // LIVE SCORES: There is no automatic score feed. The app has no live-data
 // backend wired up. To reflect real results, manually set each match's
 // `status` to 'finished' and fill `homeScore` / `awayScore` with the actual
