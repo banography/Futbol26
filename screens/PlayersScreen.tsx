@@ -335,7 +335,7 @@ export function PlayersScreen() {
           ListHeaderComponent={
             <View style={s.listHeader}>
               <Text style={s.listHeaderText}>
-                {sortedSquads.length} NATIONS  ·  2026 FIFA WORLD CUP
+                {sortedSquads.length} NATIONS
               </Text>
             </View>
           }
