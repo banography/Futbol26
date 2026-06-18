@@ -1,7 +1,7 @@
 export const PALETTE = [
-  '#003C1E', '#3CF0B4', '#96B400', '#B4F01E',
-  '#9678F0', '#3C00B4', '#1E1EF0', '#F01E00',
-  '#B40000', '#780000',
+  '#0A3D22', '#34E6B0', '#9FB80A', '#AEE82A',
+  '#9070EC', '#3A0AAE', '#2424E6', '#EC2A0A',
+  '#AE0A0A', '#700A0A',
 ] as const;
 
 export type PaletteColor = (typeof PALETTE)[number];
