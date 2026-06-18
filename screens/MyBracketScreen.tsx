@@ -1224,7 +1224,7 @@ function ShareTab({
   }
 
   function buildDailyText(): string {
-    const lines = ['My 2026 World Cup Picks', todayLabel, ''];
+    const lines = ['My Picks', todayLabel, ''];
     for (const m of todayPicks) {
       const p = dailyPredictions[m.id]!;
       const win = p.outcome === 'home' ? `${m.homeTeam.name} wins` : p.outcome === 'away' ? `${m.awayTeam.name} wins` : 'Draw';
@@ -1238,7 +1238,7 @@ function ShareTab({
   }
 
   function buildBracketText(): string {
-    const lines = ['My 2026 World Cup Bracket', ''];
+    const lines = ['My Bracket', ''];
     if (champion) lines.push(`Champion: ${champion.name}`);
     if (finalist1 || finalist2) lines.push(`Final: ${finalist1?.name ?? '?'} vs ${finalist2?.name ?? '?'}`);
     lines.push('', 'Built with Futbol26');
