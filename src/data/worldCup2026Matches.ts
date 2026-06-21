@@ -22,6 +22,7 @@ export type Match = {
   status: 'scheduled' | 'live' | 'finished';
   homeScore: number | null;
   awayScore: number | null;
+  winnerCode?: string;
 };
 
 // ── Team definitions (reused across multiple matches) ──────────────────────

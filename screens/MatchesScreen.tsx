@@ -164,7 +164,7 @@ export function MatchesScreen({ onMatchPress }: MatchesScreenProps) {
       </View>
 
       {/* Non-blocking indicator shown during background refresh */}
-      {(loading || refreshing) && (
+      {loading && (
         <View style={styles.updatingRow}>
           <ActivityIndicator size="small" color={colors.textMuted} />
           <Text style={styles.updatingText}>Updating…</Text>

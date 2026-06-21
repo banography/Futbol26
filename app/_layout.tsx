@@ -16,6 +16,7 @@ import {
 } from '@expo-google-fonts/inter';
 import { LaunchIntro } from '../components/LaunchIntro';
 import { MatchDataProvider } from '../contexts/MatchDataContext';
+import { TournamentConfigProvider } from '../contexts/TournamentConfigContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -52,12 +53,14 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <MatchDataProvider>
-        {/* Light status bar during intro (black bg); dark thereafter (light app bg) */}
-        <StatusBar style={introVisible ? 'light' : 'dark'} />
-        <Stack screenOptions={{ headerShown: false, gestureEnabled: true }} />
-        {introVisible && (
-          <LaunchIntro onDone={() => setIntroVisible(false)} />
-        )}
+        <TournamentConfigProvider>
+          {/* Light status bar during intro (black bg); dark thereafter (light app bg) */}
+          <StatusBar style={introVisible ? 'light' : 'dark'} />
+          <Stack screenOptions={{ headerShown: false, gestureEnabled: true }} />
+          {introVisible && (
+            <LaunchIntro onDone={() => setIntroVisible(false)} />
+          )}
+        </TournamentConfigProvider>
       </MatchDataProvider>
     </SafeAreaProvider>
   );
