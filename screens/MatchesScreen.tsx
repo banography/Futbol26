@@ -7,6 +7,8 @@ import {
   Modal,
   StyleSheet,
   TextInput,
+  RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
 
 import type { Match as WC26Match } from '../src/data/worldCup2026Matches';
@@ -107,11 +109,9 @@ export function MatchesScreen({ onMatchPress }: MatchesScreenProps) {
   const [viewMode, setViewMode]         = useState<ViewMode>('upcoming');
   const [watchVisible, setWatchVisible] = useState(false);
   const [searchQuery, setSearchQuery]   = useState('');
-  const { matches, loading }            = useMatchData();
+  const { matches, loading, refreshing, refetch } = useMatchData();
 
   const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-
-  if (loading) return <View style={styles.root} />;
 
   const q = searchQuery.trim();
 
@@ -163,6 +163,14 @@ export function MatchesScreen({ onMatchPress }: MatchesScreenProps) {
         />
       </View>
 
+      {/* Non-blocking indicator shown during background refresh */}
+      {(loading || refreshing) && (
+        <View style={styles.updatingRow}>
+          <ActivityIndicator size="small" color={colors.textMuted} />
+          <Text style={styles.updatingText}>Updating…</Text>
+        </View>
+      )}
+
       {/* ── Upcoming tab ─────────────────────────────────────────────────────── */}
       {viewMode === 'upcoming' && (
         <ScrollView
@@ -170,6 +178,7 @@ export function MatchesScreen({ onMatchPress }: MatchesScreenProps) {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refetch} />}
         >
           {upcomingGroups.length === 0 ? (
             <View style={styles.centerBox}>
@@ -204,6 +213,7 @@ export function MatchesScreen({ onMatchPress }: MatchesScreenProps) {
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refetch} />}
           >
             {resultsGroups.map((group) => (
               <DateSection
@@ -252,6 +262,8 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     letterSpacing: 0.2,
   },
+  updatingRow:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 4 },
+  updatingText:     { fontSize: 12, fontFamily: fonts.interRegular, color: colors.textMuted, letterSpacing: 0.3 },
   centerBox:        { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
   emptyText:        { fontSize: 14, color: colors.textMuted, letterSpacing: 0.4 },
   scroll:           { flex: 1 },

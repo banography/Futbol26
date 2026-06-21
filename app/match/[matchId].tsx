@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
 import Svg, { Path } from 'react-native-svg';
 import {
-  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -37,7 +36,7 @@ export default function MatchDetailScreen() {
   const { matchId } = useLocalSearchParams<{ matchId: string }>();
   const router = useRouter();
 
-  const { matches, loading } = useMatchData();
+  const { matches } = useMatchData();
   const deviceTz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
 
   const match = useMemo(() => {
@@ -60,11 +59,7 @@ export default function MatchDetailScreen() {
           </Pressable>
         </View>
 
-        {loading ? (
-          <View style={styles.centerBox}>
-            <ActivityIndicator color={colors.accent} size="large" />
-          </View>
-        ) : match === null ? (
+        {match === null ? (
           <View style={styles.centerBox}>
             <Text style={styles.mutedText}>Match not found</Text>
           </View>

@@ -15,6 +15,7 @@ import {
   Inter_600SemiBold,
 } from '@expo-google-fonts/inter';
 import { LaunchIntro } from '../components/LaunchIntro';
+import { MatchDataProvider } from '../contexts/MatchDataContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -50,12 +51,14 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      {/* Light status bar during intro (black bg); dark thereafter (light app bg) */}
-      <StatusBar style={introVisible ? 'light' : 'dark'} />
-      <Stack screenOptions={{ headerShown: false, gestureEnabled: true }} />
-      {introVisible && (
-        <LaunchIntro onDone={() => setIntroVisible(false)} />
-      )}
+      <MatchDataProvider>
+        {/* Light status bar during intro (black bg); dark thereafter (light app bg) */}
+        <StatusBar style={introVisible ? 'light' : 'dark'} />
+        <Stack screenOptions={{ headerShown: false, gestureEnabled: true }} />
+        {introVisible && (
+          <LaunchIntro onDone={() => setIntroVisible(false)} />
+        )}
+      </MatchDataProvider>
     </SafeAreaProvider>
   );
 }
