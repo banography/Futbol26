@@ -18,13 +18,14 @@ import { colors, PALETTE } from '../constants/colors';
 import { fonts } from '../constants/typography';
 import { TeamFlagImage } from '../components/TeamFlagImage';
 import { getFlagUrl } from '../services/futbolApi';
-import { WC26_MATCHES } from '../src/data/worldCup2026Matches';
 import type { Match as WC26Match } from '../src/data/worldCup2026Matches';
 import { formatMatchTime, formatMatchDate } from '../src/utils/formatMatchTime';
 import {
   loadDailyPredictions, saveDailyPredictions, emptyPrediction,
 } from '../services/dailyPredictionsService';
 import type { DailyPredictions, DailyOutcome } from '../services/dailyPredictionsService';
+import { useMatchData } from '../contexts/MatchDataContext';
+import { useTournamentConfig } from '../contexts/TournamentConfigContext';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -89,10 +90,8 @@ async function saveKnockoutPicks(picks: Record<number, string>): Promise<void> {
 
 // ── Group stage data ──────────────────────────────────────────────────────────
 
-const GROUP_STAGE_MATCHES = WC26_MATCHES.filter(m => m.stage === 'Group Stage');
-
-function getGroupMatches(group: string): WC26Match[] {
-  return GROUP_STAGE_MATCHES.filter(m => m.group === group);
+function getGroupMatches(allMatches: WC26Match[], group: string): WC26Match[] {
+  return allMatches.filter(m => m.stage === 'Group Stage' && m.group === group);
 }
 
 // ── Standings calculation ─────────────────────────────────────────────────────
@@ -125,6 +124,17 @@ function computeStandings(groupMatches: WC26Match[], picks: GroupPicks): TeamSta
   );
 }
 
+function applyRankOverride(standings: TeamStats[], overrideCodes: string[]): TeamStats[] {
+  const byCode = new Map(standings.map(s => [s.code, s]));
+  const ordered: TeamStats[] = [];
+  for (const code of overrideCodes) {
+    const s = byCode.get(code);
+    if (s) { ordered.push(s); byCode.delete(code); }
+  }
+  for (const s of byCode.values()) ordered.push(s);
+  return ordered;
+}
+
 // ── Today helpers ─────────────────────────────────────────────────────────────
 
 function getLocalDateStr(dateUtc: string): string {
@@ -133,15 +143,15 @@ function getLocalDateStr(dateUtc: string): string {
   }).format(new Date(dateUtc));
 }
 
-function getTodayOrNextMatchday(): { matches: WC26Match[]; label: string } {
+function getTodayOrNextMatchday(allMatches: WC26Match[]): { matches: WC26Match[]; label: string } {
   const todayStr = new Intl.DateTimeFormat('en-CA', {
     timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date());
-  const todayMatches = WC26_MATCHES.filter(m => getLocalDateStr(m.dateUtc) === todayStr);
+  const todayMatches = allMatches.filter(m => getLocalDateStr(m.dateUtc) === todayStr);
   if (todayMatches.length > 0) return { matches: todayMatches, label: "Today's Matches" };
 
   const now = Date.now();
-  const upcoming = WC26_MATCHES
+  const upcoming = allMatches
     .filter(m => new Date(m.dateUtc).getTime() > now)
     .sort((a, b) => a.dateUtc.localeCompare(b.dateUtc));
   if (upcoming.length === 0) return { matches: [], label: 'No Upcoming Matches' };
@@ -442,15 +452,16 @@ const tmc = StyleSheet.create({
 // ── TodayTab ──────────────────────────────────────────────────────────────────
 
 function TodayTab({
-  dailyPredictions, onOutcome, onScoreChange, onNoteChange, onLockToggle,
+  allMatches, dailyPredictions, onOutcome, onScoreChange, onNoteChange, onLockToggle,
 }: {
+  allMatches: WC26Match[];
   dailyPredictions: DailyPredictions;
   onOutcome: (matchId: string, outcome: DailyOutcome) => void;
   onScoreChange: (matchId: string, field: 'predictedHomeScore' | 'predictedAwayScore', value: string) => void;
   onNoteChange: (matchId: string, field: 'scorerNote' | 'userNote', value: string) => void;
   onLockToggle: (matchIds: string[], lock: boolean) => void;
 }) {
-  const { matches, label } = useMemo(getTodayOrNextMatchday, []);
+  const { matches, label } = useMemo(() => getTodayOrNextMatchday(allMatches), [allMatches]);
   const matchIds      = matches.map(m => m.id);
   const isTodayLocked = matchIds.length > 0 && matchIds.some(id => dailyPredictions[id]?.lockedAt != null);
 
@@ -574,8 +585,9 @@ const mpr = StyleSheet.create({
 // ── GroupSection ──────────────────────────────────────────────────────────────
 
 function GroupSection({
-  group, picks, lockedMatchIds, isExpanded, onToggle, onPick,
+  allMatches, group, picks, lockedMatchIds, isExpanded, onToggle, onPick,
 }: {
+  allMatches: WC26Match[];
   group: string;
   picks: GroupPicks;
   lockedMatchIds: Set<string>;
@@ -583,7 +595,7 @@ function GroupSection({
   onToggle: () => void;
   onPick: (matchId: string, outcome: MatchOutcome) => void;
 }) {
-  const matches   = getGroupMatches(group);
+  const matches   = getGroupMatches(allMatches, group);
   const pickCount = matches.filter(m => picks[m.id] !== undefined).length;
 
   return (
@@ -665,10 +677,21 @@ const sdr = StyleSheet.create({
 
 // ── GroupStandingsSection ─────────────────────────────────────────────────────
 
-function GroupStandingsSection({ group, picks }: { group: string; picks: GroupPicks }) {
-  const matches      = getGroupMatches(group);
-  const standings    = computeStandings(matches, picks);
-  const hasAnyPicks  = standings.some(s => s.played > 0);
+function GroupStandingsSection({
+  allMatches, group, picks, groupRankOverrides = {},
+}: {
+  allMatches: WC26Match[];
+  group: string;
+  picks: GroupPicks;
+  groupRankOverrides?: Record<string, string[]>;
+}) {
+  const matches   = getGroupMatches(allMatches, group);
+  let standings   = computeStandings(matches, picks);
+  const override  = groupRankOverrides[group];
+  if (override && override.length > 0) {
+    standings = applyRankOverride(standings, override);
+  }
+  const hasAnyPicks = standings.some(s => s.played > 0);
   return (
     <View style={gss.container}>
       <View style={gss.header}>
@@ -709,12 +732,14 @@ const gss = StyleSheet.create({
 // ── GroupsContent ─────────────────────────────────────────────────────────────
 
 function GroupsContent({
-  picks, lockedMatchIds, onPick, onReset,
+  allMatches, picks, lockedMatchIds, onPick, onReset, groupRankOverrides,
 }: {
+  allMatches: WC26Match[];
   picks: GroupPicks;
   lockedMatchIds: Set<string>;
   onPick: (matchId: string, outcome: MatchOutcome) => void;
   onReset: () => void;
+  groupRankOverrides: Record<string, string[]>;
 }) {
   const [expandedGroup, setExpandedGroup] = useState<string | null>('A');
 
@@ -726,7 +751,7 @@ function GroupsContent({
       </View>
       {GROUPS.map(g => (
         <GroupSection
-          key={g} group={g} picks={picks} lockedMatchIds={lockedMatchIds}
+          key={g} allMatches={allMatches} group={g} picks={picks} lockedMatchIds={lockedMatchIds}
           isExpanded={expandedGroup === g}
           onToggle={() => setExpandedGroup(prev => prev === g ? null : g)}
           onPick={onPick}
@@ -736,7 +761,12 @@ function GroupsContent({
         <Text style={gc.sectionLabel}>MY STANDINGS</Text>
         <View style={gc.sectionLine} />
       </View>
-      {GROUPS.map(g => <GroupStandingsSection key={g} group={g} picks={picks} />)}
+      {GROUPS.map(g => (
+        <GroupStandingsSection
+          key={g} allMatches={allMatches} group={g} picks={picks}
+          groupRankOverrides={groupRankOverrides}
+        />
+      ))}
       <Text style={gc.tiebreaker}>Tiebreakers simplified for MVP.</Text>
       <ResetButton onPress={onReset} />
     </ScrollView>
@@ -799,12 +829,24 @@ function resolveSlot(src: SlotSource, gs: Map<string, TeamStats[]>, b3: TeamStat
   const t = b3[(src as { t: 'b3'; r: number }).r - 1]; return t ? { code: t.code, name: t.name } : null;
 }
 
-function buildKnockout(gp: GroupPicks, kp: Record<number, string>): Map<number, KnockoutMatchup> {
+function buildKnockout(
+  allMatches: WC26Match[],
+  gp: GroupPicks,
+  kp: Record<number, string>,
+  groupRankOverrides: Record<string, string[]> = {},
+): Map<number, KnockoutMatchup> {
   const result = new Map<number, KnockoutMatchup>();
   const gs     = new Map<string, TeamStats[]>();
   for (const g of GROUPS) {
-    const ms = getGroupMatches(g);
-    if (ms.every(m => gp[m.id] !== undefined)) gs.set(g, computeStandings(ms, gp));
+    const ms = getGroupMatches(allMatches, g);
+    if (ms.every(m => gp[m.id] !== undefined)) {
+      let standings = computeStandings(ms, gp);
+      const override = groupRankOverrides[g];
+      if (override && override.length > 0) {
+        standings = applyRankOverride(standings, override);
+      }
+      gs.set(g, standings);
+    }
   }
   // TODO: Apply official FIFA 3rd-place pool matrix for accurate slot assignment
   const b3: TeamStats[] = [];
@@ -924,14 +966,19 @@ const kmc = StyleSheet.create({
 // ── KnockoutContent ───────────────────────────────────────────────────────────
 
 function KnockoutContent({
-  groupPicks, knockoutPicks, onPick,
+  allMatches, groupRankOverrides, groupPicks, knockoutPicks, onPick,
 }: {
+  allMatches: WC26Match[];
+  groupRankOverrides: Record<string, string[]>;
   groupPicks: GroupPicks;
   knockoutPicks: Record<number, string>;
   onPick: (matchNum: number, code: string | null) => void;
 }) {
-  const bracket           = useMemo(() => buildKnockout(groupPicks, knockoutPicks), [groupPicks, knockoutPicks]);
-  const totalGroup        = GROUP_STAGE_MATCHES.length;
+  const bracket           = useMemo(
+    () => buildKnockout(allMatches, groupPicks, knockoutPicks, groupRankOverrides),
+    [allMatches, groupPicks, knockoutPicks, groupRankOverrides],
+  );
+  const totalGroup        = allMatches.filter(m => m.stage === 'Group Stage').length;
   const pickedGroup       = Object.keys(groupPicks).length;
   const allPicked         = pickedGroup >= totalGroup;
   const champion          = bracket.get(104)?.winner ?? null;
@@ -1010,8 +1057,11 @@ const ko = StyleSheet.create({
 // ── BracketTab ────────────────────────────────────────────────────────────────
 
 function BracketTab({
-  groupPicks, knockoutPicks, lockedMatchIds, onGroupPick, onGroupReset, onKnockoutPick,
+  allMatches, groupRankOverrides, groupPicks, knockoutPicks, lockedMatchIds,
+  onGroupPick, onGroupReset, onKnockoutPick,
 }: {
+  allMatches: WC26Match[];
+  groupRankOverrides: Record<string, string[]>;
   groupPicks: GroupPicks;
   knockoutPicks: Record<number, string>;
   lockedMatchIds: Set<string>;
@@ -1040,6 +1090,8 @@ function BracketTab({
       </View>
       {section === 'groups' ? (
         <GroupsContent
+          allMatches={allMatches}
+          groupRankOverrides={groupRankOverrides}
           picks={groupPicks}
           lockedMatchIds={lockedMatchIds}
           onPick={onGroupPick}
@@ -1047,6 +1099,8 @@ function BracketTab({
         />
       ) : (
         <KnockoutContent
+          allMatches={allMatches}
+          groupRankOverrides={groupRankOverrides}
           groupPicks={groupPicks}
           knockoutPicks={knockoutPicks}
           onPick={onKnockoutPick}
@@ -1182,14 +1236,22 @@ const sc = StyleSheet.create({
 // ── ShareTab ──────────────────────────────────────────────────────────────────
 
 function ShareTab({
-  dailyPredictions, groupPicks, knockoutPicks,
+  allMatches, groupRankOverrides, dailyPredictions, groupPicks, knockoutPicks,
 }: {
+  allMatches: WC26Match[];
+  groupRankOverrides: Record<string, string[]>;
   dailyPredictions: DailyPredictions;
   groupPicks: GroupPicks;
   knockoutPicks: Record<number, string>;
 }) {
-  const bracket = useMemo(() => buildKnockout(groupPicks, knockoutPicks), [groupPicks, knockoutPicks]);
-  const { matches: todayMatches, label: todayLabel } = useMemo(getTodayOrNextMatchday, []);
+  const bracket = useMemo(
+    () => buildKnockout(allMatches, groupPicks, knockoutPicks, groupRankOverrides),
+    [allMatches, groupPicks, knockoutPicks, groupRankOverrides],
+  );
+  const { matches: todayMatches, label: todayLabel } = useMemo(
+    () => getTodayOrNextMatchday(allMatches),
+    [allMatches],
+  );
   const todayPicks = todayMatches.filter(m => dailyPredictions[m.id]?.outcome != null);
 
   const finalMatchup = bracket.get(104);
@@ -1334,6 +1396,10 @@ const shr = StyleSheet.create({
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export function MyBracketScreen() {
+  const { matches: allMatches } = useMatchData();
+  const { config }              = useTournamentConfig();
+  const groupRankOverrides      = config.groupRankOverrides ?? {};
+
   const [subTab, setSubTab] = useState<SubTab>('today');
 
   const [groupPicks,    setGroupPicks]    = useState<GroupPicks>({});
@@ -1368,7 +1434,7 @@ export function MyBracketScreen() {
     const next       = { ...dailyPredictions, [matchId]: { ...current, outcome: newOutcome } };
     setDailyPredictions(next);
     saveDailyPredictions(next);
-    if (GROUP_STAGE_MATCHES.some(m => m.id === matchId)) {
+    if (allMatches.some(m => m.id === matchId && m.stage === 'Group Stage')) {
       const gNext = { ...groupPicks };
       if (newOutcome === null) delete gNext[matchId]; else gNext[matchId] = newOutcome;
       setGroupPicks(gNext);
@@ -1446,6 +1512,7 @@ export function MyBracketScreen() {
 
       {subTab === 'today' && (
         <TodayTab
+          allMatches={allMatches}
           dailyPredictions={dailyPredictions}
           onOutcome={handleDailyOutcome}
           onScoreChange={handleDailyScoreChange}
@@ -1456,6 +1523,8 @@ export function MyBracketScreen() {
 
       {subTab === 'bracket' && (
         <BracketTab
+          allMatches={allMatches}
+          groupRankOverrides={groupRankOverrides}
           groupPicks={groupPicks}
           knockoutPicks={knockoutPicks}
           lockedMatchIds={lockedMatchIds}
@@ -1467,6 +1536,8 @@ export function MyBracketScreen() {
 
       {subTab === 'share' && (
         <ShareTab
+          allMatches={allMatches}
+          groupRankOverrides={groupRankOverrides}
           dailyPredictions={dailyPredictions}
           groupPicks={groupPicks}
           knockoutPicks={knockoutPicks}
