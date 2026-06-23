@@ -7,6 +7,8 @@ import { TeamFlagImage } from '../components/TeamFlagImage';
 import { getFlagUrl } from '../services/futbolApi';
 import type { Match as WC26Match } from '../src/data/worldCup2026Matches';
 import { useMatchData } from '../services/matchDataService';
+import { useTournamentConfig } from '../contexts/TournamentConfigContext';
+import type { SeedSource, TournamentConfig } from '../contexts/TournamentConfigContext';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -78,59 +80,11 @@ function computeGroupStandings(groupMatches: WC26Match[]): GroupTeamStats[] {
   });
 }
 
-// ── Bracket seeding types ─────────────────────────────────────────────────────
+// ── Bracket types ─────────────────────────────────────────────────────────────
 
-type SlotSource =
-  | { kind: 'winner';  group: typeof GROUPS[number] }
-  | { kind: 'runnerup'; group: typeof GROUPS[number] }
-  | { kind: 'best3rd'; rank: number };
+type BracketMatchup = { home: string | null; away: string | null; winner: string | null };
 
-type R32Slot = { home: string | null; away: string | null };
-
-// ── Bracket seeding constants ─────────────────────────────────────────────────
-
-const GROUP_STAGE_MATCH_COUNT = 72;
-
-// Official FIFA 2026 R32 bracket (M73–M88). Winner/runner-up pairings match the
-// published FIFA schedule. Third-place slot rank order (best3rd 0–7) is sorted by
-// Pts→GD→GF→name — the official FIFA 3rd-place pool matrix for exact slot
-// assignment has not been applied; adjust rank assignments when FIFA publishes it.
-const R32_SEEDING: Array<{ home: SlotSource; away: SlotSource }> = [
-  // M73
-  { home: { kind: 'runnerup', group: 'A' }, away: { kind: 'runnerup', group: 'B' } },
-  // M74
-  { home: { kind: 'winner',   group: 'E' }, away: { kind: 'best3rd',  rank: 0   } },
-  // M75
-  { home: { kind: 'winner',   group: 'F' }, away: { kind: 'runnerup', group: 'C' } },
-  // M76
-  { home: { kind: 'winner',   group: 'C' }, away: { kind: 'runnerup', group: 'F' } },
-  // M77
-  { home: { kind: 'winner',   group: 'I' }, away: { kind: 'best3rd',  rank: 1   } },
-  // M78
-  { home: { kind: 'runnerup', group: 'E' }, away: { kind: 'runnerup', group: 'I' } },
-  // M79
-  { home: { kind: 'winner',   group: 'A' }, away: { kind: 'best3rd',  rank: 2   } },
-  // M80
-  { home: { kind: 'winner',   group: 'L' }, away: { kind: 'best3rd',  rank: 3   } },
-  // M81
-  { home: { kind: 'winner',   group: 'D' }, away: { kind: 'best3rd',  rank: 4   } },
-  // M82
-  { home: { kind: 'winner',   group: 'G' }, away: { kind: 'best3rd',  rank: 5   } },
-  // M83
-  { home: { kind: 'runnerup', group: 'K' }, away: { kind: 'runnerup', group: 'L' } },
-  // M84
-  { home: { kind: 'winner',   group: 'H' }, away: { kind: 'runnerup', group: 'J' } },
-  // M85
-  { home: { kind: 'winner',   group: 'B' }, away: { kind: 'best3rd',  rank: 6   } },
-  // M86
-  { home: { kind: 'winner',   group: 'J' }, away: { kind: 'runnerup', group: 'H' } },
-  // M87
-  { home: { kind: 'winner',   group: 'K' }, away: { kind: 'best3rd',  rank: 7   } },
-  // M88
-  { home: { kind: 'runnerup', group: 'D' }, away: { kind: 'runnerup', group: 'G' } },
-];
-
-// ── Bracket seeding helpers ───────────────────────────────────────────────────
+// ── Bracket helpers ───────────────────────────────────────────────────────────
 
 function computeAllStandings(allMatches: WC26Match[]): Map<string, GroupTeamStats[]> {
   const result = new Map<string, GroupTeamStats[]>();
@@ -156,28 +110,143 @@ function getBestThirdPlaceTeams(allStandings: Map<string, GroupTeamStats[]>): Gr
     .slice(0, 8);
 }
 
-function resolveSlot(
-  src: SlotSource,
+function resolveSeedSourceCode(
+  src: SeedSource,
   allStandings: Map<string, GroupTeamStats[]>,
   bestThirds: GroupTeamStats[],
+  nextThirdRank: () => number,
 ): string | null {
-  if (src.kind === 'winner')   return allStandings.get(src.group)?.[0]?.code ?? null;
-  if (src.kind === 'runnerup') return allStandings.get(src.group)?.[1]?.code ?? null;
-  return bestThirds[src.rank]?.code ?? null;
+  if (src.kind === 'groupPosition') {
+    return allStandings.get(src.group)?.[src.position - 1]?.code ?? null;
+  }
+  if (src.kind === 'thirdPlace') {
+    return bestThirds[nextThirdRank()]?.code ?? null;
+  }
+  return null;
 }
 
-function computeR32Slots(allMatches: WC26Match[]): R32Slot[] | null {
-  const gs = allMatches.filter(m => m.stage === 'Group Stage');
-  if (gs.length !== GROUP_STAGE_MATCH_COUNT) return null;
-  if (!gs.every(m => m.status === 'finished' && m.homeScore !== null && m.awayScore !== null)) return null;
+const BRACKET_ROUNDS = 5; // R32 → R16 → QF → SF → Final
+const EMPTY_BRACKET: BracketMatchup[][] = [
+  Array.from({ length: 16 }, () => ({ home: null, away: null, winner: null })),
+  Array.from({ length: 8  }, () => ({ home: null, away: null, winner: null })),
+  Array.from({ length: 4  }, () => ({ home: null, away: null, winner: null })),
+  Array.from({ length: 2  }, () => ({ home: null, away: null, winner: null })),
+  Array.from({ length: 1  }, () => ({ home: null, away: null, winner: null })),
+];
 
+function computeKnockoutBracket(
+  allMatches: WC26Match[],
+  config: TournamentConfig,
+): BracketMatchup[][] {
+  const { r32Seeding, knockoutAdvancement } = config;
+
+  if (!r32Seeding || !knockoutAdvancement ||
+      Object.keys(r32Seeding).length === 0 ||
+      Object.keys(knockoutAdvancement).length === 0) {
+    if (__DEV__) console.warn('[computeKnockoutBracket] r32Seeding or knockoutAdvancement missing in config');
+    return EMPTY_BRACKET;
+  }
+
+  const finalMatch = allMatches.find(m => m.stage === 'Final');
+  if (!finalMatch) {
+    if (__DEV__) console.warn('[computeKnockoutBracket] No Final match found');
+    return EMPTY_BRACKET;
+  }
+
+  // Build reverse adjacency: feedsInto[destId] = { home: srcId, away: srcId }
+  const feedsInto = new Map<string, { home: string | null; away: string | null }>();
+  for (const [srcId, adv] of Object.entries(knockoutAdvancement)) {
+    if (adv.winnerTo) {
+      const { matchId, slot } = adv.winnerTo;
+      if (!feedsInto.has(matchId)) feedsInto.set(matchId, { home: null, away: null });
+      feedsInto.get(matchId)![slot] = srcId;
+    }
+  }
+
+  // Derive visual order by BFS from Final (levels[0] = Final, last level = R32)
+  const levels: (string | null)[][] = [[finalMatch.id]];
+  for (let r = 0; r < BRACKET_ROUNDS - 1; r++) {
+    const cur = levels[r]!;
+    const next: (string | null)[] = [];
+    for (const mid of cur) {
+      if (!mid) { next.push(null, null); continue; }
+      const feeders = feedsInto.get(mid);
+      if (!feeders) {
+        if (__DEV__) console.warn(`[computeKnockoutBracket] No feeders for match ${mid}`);
+        next.push(null, null);
+      } else {
+        next.push(feeders.home, feeders.away);
+      }
+    }
+    levels.push(next);
+  }
+  levels.reverse(); // now [R32, R16, QF, SF, Final]
+
+  // Compute standings for R32 seeding
   const allStandings = computeAllStandings(allMatches);
   const bestThirds   = getBestThirdPlaceTeams(allStandings);
 
-  return R32_SEEDING.map(({ home, away }) => ({
-    home: resolveSlot(home, allStandings, bestThirds),
-    away: resolveSlot(away, allStandings, bestThirds),
-  }));
+  // Build slot state keyed by matchId
+  const slots = new Map<string, BracketMatchup>();
+
+  // Seed R32 — process in sorted matchId order for stable thirdPlace rank assignment
+  let thirdRank = 0;
+  for (const [matchId, seeding] of Object.entries(r32Seeding).sort(([a], [b]) => a.localeCompare(b))) {
+    slots.set(matchId, {
+      home:   resolveSeedSourceCode(seeding.home, allStandings, bestThirds, () => thirdRank++),
+      away:   resolveSeedSourceCode(seeding.away, allStandings, bestThirds, () => thirdRank++),
+      winner: null,
+    });
+  }
+
+  // Propagate winners in match-number order (topological: R32 → R16 → QF → SF → Final)
+  const knockoutMatches = allMatches
+    .filter(m => m.stage !== 'Group Stage')
+    .sort((a, b) => a.matchNumber - b.matchNumber);
+
+  for (const match of knockoutMatches) {
+    if (!slots.has(match.id)) slots.set(match.id, { home: null, away: null, winner: null });
+    const slot = slots.get(match.id)!;
+
+    if (match.status !== 'finished') continue;
+
+    // Resolve winner using slot codes (match.homeTeam/awayTeam are TBD in raw data)
+    let winner: string | null = null;
+    if (match.winnerCode) {
+      winner = match.winnerCode;
+    } else if (match.homeScore !== null && match.awayScore !== null) {
+      if (match.homeScore > match.awayScore) winner = slot.home;
+      else if (match.awayScore > match.homeScore) winner = slot.away;
+    }
+    slot.winner = winner;
+
+    if (!winner) continue;
+
+    const adv = knockoutAdvancement[match.id];
+    if (adv?.winnerTo) {
+      const { matchId: dId, slot: dSlot } = adv.winnerTo;
+      if (!slots.has(dId)) slots.set(dId, { home: null, away: null, winner: null });
+      slots.get(dId)![dSlot] = winner;
+    }
+
+    // Propagate loser (third-place match)
+    if (adv?.loserTo) {
+      const loser = winner === slot.home ? slot.away : slot.home;
+      if (loser) {
+        const { matchId: dId, slot: dSlot } = adv.loserTo;
+        if (!slots.has(dId)) slots.set(dId, { home: null, away: null, winner: null });
+        slots.get(dId)![dSlot] = loser;
+      }
+    }
+  }
+
+  // Map ordered levels → BracketMatchup[][]
+  return levels.map(level =>
+    level.map(mid =>
+      mid ? (slots.get(mid) ?? { home: null, away: null, winner: null })
+          : { home: null, away: null, winner: null }
+    )
+  );
 }
 
 const formatGD = (n: number) => (n > 0 ? `+${n}` : `${n}`);
@@ -563,7 +632,7 @@ function centerY(r: number, i: number): number {
 
 // ── BracketCanvas ─────────────────────────────────────────────────────────────
 
-function BracketCanvas({ r32Slots }: { r32Slots: R32Slot[] | null }) {
+function BracketCanvas({ bracketRounds }: { bracketRounds: BracketMatchup[][] }) {
   const nodes: React.ReactElement[] = [];
 
   ROUNDS.forEach((round, r) => {
@@ -595,9 +664,9 @@ function BracketCanvas({ r32Slots }: { r32Slots: R32Slot[] | null }) {
     for (let i = 0; i < round.count; i++) {
       const cy  = centerY(r, i);
       const top = cy - MATCHUP_H / 2;
-      const slot      = r === 0 ? (r32Slots != null ? (r32Slots[i] ?? null) : null) : null;
-      const homeLabel: string = slot?.home != null ? slot.home : 'TBD';
-      const awayLabel: string = slot?.away != null ? slot.away : 'TBD';
+      const matchup   = bracketRounds[r]?.[i] ?? null;
+      const homeLabel: string = matchup?.home != null ? matchup.home : 'TBD';
+      const awayLabel: string = matchup?.away != null ? matchup.away : 'TBD';
 
       // ── Matchup pill (two team rows + 1px divider)
       nodes.push(
@@ -731,7 +800,17 @@ const bs = StyleSheet.create({
 export function TournamentScreen() {
   const [segment, setSegment] = useState<Segment>('standings');
   const { matches } = useMatchData();
-  const r32Slots = useMemo(() => computeR32Slots(matches), [matches]);
+  const { config } = useTournamentConfig();
+
+  const bracketRounds = useMemo(
+    () => computeKnockoutBracket(matches, config),
+    [matches, config],
+  );
+
+  const groupStageComplete = useMemo(() => {
+    const gs = matches.filter(m => m.stage === 'Group Stage');
+    return gs.length === 72 && gs.every(m => m.status === 'finished');
+  }, [matches]);
 
   return (
     <View style={styles.root}>
@@ -771,7 +850,7 @@ export function TournamentScreen() {
           showsVerticalScrollIndicator={false}
           bounces
         >
-          {!r32Slots && (
+          {!groupStageComplete && (
             <Text style={styles.bracketNote}>
               Knockout bracket will populate after the group stage is complete.
             </Text>
@@ -785,7 +864,7 @@ export function TournamentScreen() {
             contentContainerStyle={styles.bracketPadding}
             decelerationRate="normal"
           >
-            <BracketCanvas r32Slots={r32Slots} />
+            <BracketCanvas bracketRounds={bracketRounds} />
           </ScrollView>
         </ScrollView>
       )}
