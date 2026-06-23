@@ -82,7 +82,15 @@ function computeGroupStandings(groupMatches: WC26Match[]): GroupTeamStats[] {
 
 // ── Bracket types ─────────────────────────────────────────────────────────────
 
-type BracketMatchup = { home: string | null; away: string | null; winner: string | null };
+type BracketMatchup = {
+  homeLabel: string;
+  awayLabel: string;
+  homeIsCode: boolean;
+  awayIsCode: boolean;
+  winner: string | null;
+};
+
+type KnockoutBracketResult = { rounds: BracketMatchup[][]; r32Confirmed: boolean };
 
 // ── Bracket helpers ───────────────────────────────────────────────────────────
 
@@ -95,63 +103,90 @@ function computeAllStandings(allMatches: WC26Match[]): Map<string, GroupTeamStat
   return result;
 }
 
-function getBestThirdPlaceTeams(allStandings: Map<string, GroupTeamStats[]>): GroupTeamStats[] {
-  const thirds: GroupTeamStats[] = [];
-  for (const standings of allStandings.values()) {
-    if (standings[2]) thirds.push(standings[2]);
+function seedLabel(src: SeedSource): string {
+  if (src.kind === 'groupPosition') {
+    return `${src.position === 1 ? '1st' : '2nd'} Group ${src.group}`;
   }
-  return thirds
-    .sort((a, b) => {
-      if (b.points !== a.points) return b.points - a.points;
-      if (b.gd     !== a.gd)     return b.gd     - a.gd;
-      if (b.gf     !== a.gf)     return b.gf     - a.gf;
-      return a.name.localeCompare(b.name);
-    })
-    .slice(0, 8);
+  return '3rd-place team';
 }
 
-function resolveSeedSourceCode(
-  src: SeedSource,
+function winnerLabel(matchId: string, matchById: Map<string, WC26Match>): string {
+  const match = matchById.get(matchId);
+  return match ? `Winner Match ${match.matchNumber}` : 'TBD';
+}
+
+// Returns Map<matchId, teamCode> for each thirdPlace R32 slot, or null if the
+// matrix is absent, empty, or doesn't fully cover all eight slots.
+function resolveThirdPlaceMatrix(
+  config: TournamentConfig,
   allStandings: Map<string, GroupTeamStats[]>,
-  bestThirds: GroupTeamStats[],
-  nextThirdRank: () => number,
-): string | null {
-  if (src.kind === 'groupPosition') {
-    return allStandings.get(src.group)?.[src.position - 1]?.code ?? null;
+): Map<string, string> | null {
+  const { thirdPlaceMatrix, r32Seeding } = config;
+  if (!thirdPlaceMatrix || !r32Seeding || Object.keys(thirdPlaceMatrix).length === 0) return null;
+
+  // Rank all 12 third-place finishers to find the qualifying 8 groups
+  const thirds: Array<{ group: string; stats: GroupTeamStats }> = [];
+  for (const [group, standings] of allStandings.entries()) {
+    if (standings[2]) thirds.push({ group, stats: standings[2] });
   }
-  if (src.kind === 'thirdPlace') {
-    return bestThirds[nextThirdRank()]?.code ?? null;
+  if (thirds.length < 12) return null; // group stage not fully populated
+
+  thirds.sort((a, b) => {
+    if (b.stats.points !== a.stats.points) return b.stats.points - a.stats.points;
+    if (b.stats.gd     !== a.stats.gd)     return b.stats.gd     - a.stats.gd;
+    if (b.stats.gf     !== a.stats.gf)     return b.stats.gf     - a.stats.gf;
+    return a.stats.name.localeCompare(b.stats.name);
+  });
+
+  const matrixKey = thirds.slice(0, 8).map(t => t.group).sort().join(',');
+  const innerMap  = thirdPlaceMatrix[matrixKey];
+  if (!innerMap) return null;
+
+  // Map each thirdPlace R32 matchId → the resolved team code
+  const result = new Map<string, string>();
+  for (const [matchId, seeding] of Object.entries(r32Seeding)) {
+    if (seeding.home.kind !== 'thirdPlace' && seeding.away.kind !== 'thirdPlace') continue;
+    const groupLetter = innerMap[matchId];
+    if (!groupLetter) return null; // matrix doesn't cover this slot
+    const team = allStandings.get(groupLetter)?.[2];
+    if (!team) return null;
+    result.set(matchId, team.code);
   }
-  return null;
+
+  return result.size === 8 ? result : null;
 }
 
 const BRACKET_ROUNDS = 5; // R32 → R16 → QF → SF → Final
-const EMPTY_BRACKET: BracketMatchup[][] = [
-  Array.from({ length: 16 }, () => ({ home: null, away: null, winner: null })),
-  Array.from({ length: 8  }, () => ({ home: null, away: null, winner: null })),
-  Array.from({ length: 4  }, () => ({ home: null, away: null, winner: null })),
-  Array.from({ length: 2  }, () => ({ home: null, away: null, winner: null })),
-  Array.from({ length: 1  }, () => ({ home: null, away: null, winner: null })),
+
+const EMPTY_ROUNDS: BracketMatchup[][] = [
+  Array.from({ length: 16 }, () => ({ homeLabel: 'TBD', awayLabel: 'TBD', homeIsCode: false, awayIsCode: false, winner: null })),
+  Array.from({ length: 8  }, () => ({ homeLabel: 'TBD', awayLabel: 'TBD', homeIsCode: false, awayIsCode: false, winner: null })),
+  Array.from({ length: 4  }, () => ({ homeLabel: 'TBD', awayLabel: 'TBD', homeIsCode: false, awayIsCode: false, winner: null })),
+  Array.from({ length: 2  }, () => ({ homeLabel: 'TBD', awayLabel: 'TBD', homeIsCode: false, awayIsCode: false, winner: null })),
+  Array.from({ length: 1  }, () => ({ homeLabel: 'TBD', awayLabel: 'TBD', homeIsCode: false, awayIsCode: false, winner: null })),
 ];
 
 function computeKnockoutBracket(
   allMatches: WC26Match[],
   config: TournamentConfig,
-): BracketMatchup[][] {
+): KnockoutBracketResult {
   const { r32Seeding, knockoutAdvancement } = config;
 
   if (!r32Seeding || !knockoutAdvancement ||
       Object.keys(r32Seeding).length === 0 ||
       Object.keys(knockoutAdvancement).length === 0) {
     if (__DEV__) console.warn('[computeKnockoutBracket] r32Seeding or knockoutAdvancement missing in config');
-    return EMPTY_BRACKET;
+    return { rounds: EMPTY_ROUNDS, r32Confirmed: false };
   }
 
   const finalMatch = allMatches.find(m => m.stage === 'Final');
   if (!finalMatch) {
     if (__DEV__) console.warn('[computeKnockoutBracket] No Final match found');
-    return EMPTY_BRACKET;
+    return { rounds: EMPTY_ROUNDS, r32Confirmed: false };
   }
+
+  // matchById — needed for winnerLabel
+  const matchById = new Map(allMatches.map(m => [m.id, m]));
 
   // Build reverse adjacency: feedsInto[destId] = { home: srcId, away: srcId }
   const feedsInto = new Map<string, { home: string | null; away: string | null }>();
@@ -163,7 +198,7 @@ function computeKnockoutBracket(
     }
   }
 
-  // Derive visual order by BFS from Final (levels[0] = Final, last level = R32)
+  // Derive visual bracket order by BFS from Final (levels[0] = Final → reversed to R32 first)
   const levels: (string | null)[][] = [[finalMatch.id]];
   for (let r = 0; r < BRACKET_ROUNDS - 1; r++) {
     const cur = levels[r]!;
@@ -182,24 +217,47 @@ function computeKnockoutBracket(
   }
   levels.reverse(); // now [R32, R16, QF, SF, Final]
 
-  // Compute standings for R32 seeding
-  const allStandings = computeAllStandings(allMatches);
-  const bestThirds   = getBestThirdPlaceTeams(allStandings);
+  // ── Determine if R32 team codes are officially confirmed ───────────────────
 
-  // Build slot state keyed by matchId
-  const slots = new Map<string, BracketMatchup>();
+  const gsMatches = allMatches.filter(m => m.stage === 'Group Stage');
+  const groupStageDone = gsMatches.length === 72 &&
+    gsMatches.every(m => m.status === 'finished' && m.homeScore !== null && m.awayScore !== null);
 
-  // Seed R32 — process in sorted matchId order for stable thirdPlace rank assignment
-  let thirdRank = 0;
-  for (const [matchId, seeding] of Object.entries(r32Seeding).sort(([a], [b]) => a.localeCompare(b))) {
-    slots.set(matchId, {
-      home:   resolveSeedSourceCode(seeding.home, allStandings, bestThirds, () => thirdRank++),
-      away:   resolveSeedSourceCode(seeding.away, allStandings, bestThirds, () => thirdRank++),
-      winner: null,
-    });
+  // r32Codes: matchId → { home: teamCode | null, away: teamCode | null }
+  // Only populated when group stage is done AND thirdPlaceMatrix resolves fully.
+  let r32Codes: Map<string, { home: string | null; away: string | null }> | null = null;
+
+  if (groupStageDone) {
+    const allStandings = computeAllStandings(allMatches);
+    const thirdResolved = resolveThirdPlaceMatrix(config, allStandings);
+
+    if (thirdResolved !== null) {
+      const codes = new Map<string, { home: string | null; away: string | null }>();
+      for (const [matchId, seeding] of Object.entries(r32Seeding)) {
+        const homeCode = seeding.home.kind === 'groupPosition'
+          ? (allStandings.get(seeding.home.group)?.[seeding.home.position - 1]?.code ?? null)
+          : (thirdResolved.get(matchId) ?? null);
+        const awayCode = seeding.away.kind === 'groupPosition'
+          ? (allStandings.get(seeding.away.group)?.[seeding.away.position - 1]?.code ?? null)
+          : (thirdResolved.get(matchId) ?? null);
+        codes.set(matchId, { home: homeCode, away: awayCode });
+      }
+      r32Codes = codes;
+    }
   }
 
-  // Propagate winners in match-number order (topological: R32 → R16 → QF → SF → Final)
+  const r32Confirmed = r32Codes !== null;
+
+  // ── Internal slot state for winner propagation (team codes only) ───────────
+
+  type InternalSlot = { home: string | null; away: string | null; winner: string | null };
+  const slots = new Map<string, InternalSlot>();
+
+  for (const matchId of Object.keys(r32Seeding)) {
+    const codes = r32Codes?.get(matchId);
+    slots.set(matchId, { home: codes?.home ?? null, away: codes?.away ?? null, winner: null });
+  }
+
   const knockoutMatches = allMatches
     .filter(m => m.stage !== 'Group Stage')
     .sort((a, b) => a.matchNumber - b.matchNumber);
@@ -210,7 +268,6 @@ function computeKnockoutBracket(
 
     if (match.status !== 'finished') continue;
 
-    // Resolve winner using slot codes (match.homeTeam/awayTeam are TBD in raw data)
     let winner: string | null = null;
     if (match.winnerCode) {
       winner = match.winnerCode;
@@ -229,7 +286,6 @@ function computeKnockoutBracket(
       slots.get(dId)![dSlot] = winner;
     }
 
-    // Propagate loser (third-place match)
     if (adv?.loserTo) {
       const loser = winner === slot.home ? slot.away : slot.home;
       if (loser) {
@@ -240,13 +296,43 @@ function computeKnockoutBracket(
     }
   }
 
-  // Map ordered levels → BracketMatchup[][]
-  return levels.map(level =>
-    level.map(mid =>
-      mid ? (slots.get(mid) ?? { home: null, away: null, winner: null })
-          : { home: null, away: null, winner: null }
-    )
+  // ── Convert to BracketMatchup[][] with display labels ─────────────────────
+
+  const rounds: BracketMatchup[][] = levels.map((level, r) =>
+    level.map(mid => {
+      if (!mid) return { homeLabel: 'TBD', awayLabel: 'TBD', homeIsCode: false, awayIsCode: false, winner: null };
+
+      const slot   = slots.get(mid);
+      const winner = slot?.winner ?? null;
+
+      function resolveSlotLabel(
+        code: string | null | undefined,
+        roundIndex: number,
+        slotSide: 'home' | 'away',
+      ): { label: string; isCode: boolean } {
+        if (code != null) return { label: code, isCode: true };
+        if (roundIndex === 0) {
+          const seeding = r32Seeding![mid!];
+          return { label: seeding ? seedLabel(seeding[slotSide]) : 'TBD', isCode: false };
+        }
+        const feederMatchId = feedsInto.get(mid!)?.[slotSide];
+        return { label: feederMatchId ? winnerLabel(feederMatchId, matchById) : 'TBD', isCode: false };
+      }
+
+      const home = resolveSlotLabel(slot?.home, r, 'home');
+      const away = resolveSlotLabel(slot?.away, r, 'away');
+
+      return {
+        homeLabel: home.label,
+        awayLabel: away.label,
+        homeIsCode: home.isCode,
+        awayIsCode: away.isCode,
+        winner,
+      };
+    })
   );
+
+  return { rounds, r32Confirmed };
 }
 
 const formatGD = (n: number) => (n > 0 ? `+${n}` : `${n}`);
@@ -664,9 +750,11 @@ function BracketCanvas({ bracketRounds }: { bracketRounds: BracketMatchup[][] })
     for (let i = 0; i < round.count; i++) {
       const cy  = centerY(r, i);
       const top = cy - MATCHUP_H / 2;
-      const matchup   = bracketRounds[r]?.[i] ?? null;
-      const homeLabel: string = matchup?.home != null ? matchup.home : 'TBD';
-      const awayLabel: string = matchup?.away != null ? matchup.away : 'TBD';
+      const matchup    = bracketRounds[r]?.[i];
+      const homeLabel  = matchup?.homeLabel ?? 'TBD';
+      const awayLabel  = matchup?.awayLabel ?? 'TBD';
+      const homeIsCode = matchup?.homeIsCode ?? false;
+      const awayIsCode = matchup?.awayIsCode ?? false;
 
       // ── Matchup pill (two team rows + 1px divider)
       nodes.push(
@@ -686,11 +774,11 @@ function BracketCanvas({ bracketRounds }: { bracketRounds: BracketMatchup[][] })
           }}
         >
           <View style={bs.teamRow}>
-            <Text style={homeLabel !== 'TBD' ? bs.teamCode : bs.tbd}>{homeLabel}</Text>
+            <Text style={homeIsCode ? bs.teamCode : bs.tbd} numberOfLines={1}>{homeLabel}</Text>
           </View>
           <View style={bs.divider} />
           <View style={bs.teamRow}>
-            <Text style={awayLabel !== 'TBD' ? bs.teamCode : bs.tbd}>{awayLabel}</Text>
+            <Text style={awayIsCode ? bs.teamCode : bs.tbd} numberOfLines={1}>{awayLabel}</Text>
           </View>
         </View>,
       );
@@ -802,15 +890,10 @@ export function TournamentScreen() {
   const { matches } = useMatchData();
   const { config } = useTournamentConfig();
 
-  const bracketRounds = useMemo(
+  const { rounds: bracketRounds, r32Confirmed } = useMemo(
     () => computeKnockoutBracket(matches, config),
     [matches, config],
   );
-
-  const groupStageComplete = useMemo(() => {
-    const gs = matches.filter(m => m.stage === 'Group Stage');
-    return gs.length === 72 && gs.every(m => m.status === 'finished');
-  }, [matches]);
 
   return (
     <View style={styles.root}>
@@ -850,9 +933,9 @@ export function TournamentScreen() {
           showsVerticalScrollIndicator={false}
           bounces
         >
-          {!groupStageComplete && (
+          {!r32Confirmed && (
             <Text style={styles.bracketNote}>
-              Knockout bracket will populate after the group stage is complete.
+              Round of 32 matchups will be confirmed after the group stage.
             </Text>
           )}
 
