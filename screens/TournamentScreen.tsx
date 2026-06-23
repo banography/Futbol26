@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
+import React, { useMemo, useRef, useState } from 'react';
+import { Animated, View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { colors } from '../constants/colors';
 import { fonts } from '../constants/typography';
@@ -84,7 +84,9 @@ function computeGroupStandings(groupMatches: WC26Match[]): GroupTeamStats[] {
 
 type BracketMatchup = {
   homeLabel: string;
+  homeSub:   string | null; // second line, e.g. "Match 73" — null for codes and seed labels
   awayLabel: string;
+  awaySub:   string | null;
   homeIsCode: boolean;
   awayIsCode: boolean;
   winner: string | null;
@@ -105,14 +107,14 @@ function computeAllStandings(allMatches: WC26Match[]): Map<string, GroupTeamStat
 
 function seedLabel(src: SeedSource): string {
   if (src.kind === 'groupPosition') {
-    return `${src.position === 1 ? '1st' : '2nd'} Group ${src.group}`;
+    return `${src.position === 1 ? '1st in' : '2nd in'} Group ${src.group}`;
   }
   return '3rd-place team';
 }
 
-function winnerLabel(matchId: string, matchById: Map<string, WC26Match>): string {
-  const match = matchById.get(matchId);
-  return match ? `Winner Match ${match.matchNumber}` : 'TBD';
+function winnerSub(feederMatchId: string, matchById: Map<string, WC26Match>): string | null {
+  const match = matchById.get(feederMatchId);
+  return match != null ? `Match ${match.matchNumber}` : null;
 }
 
 // Returns Map<matchId, teamCode> for each thirdPlace R32 slot, or null if the
@@ -159,11 +161,11 @@ function resolveThirdPlaceMatrix(
 const BRACKET_ROUNDS = 5; // R32 → R16 → QF → SF → Final
 
 const EMPTY_ROUNDS: BracketMatchup[][] = [
-  Array.from({ length: 16 }, () => ({ homeLabel: 'TBD', awayLabel: 'TBD', homeIsCode: false, awayIsCode: false, winner: null })),
-  Array.from({ length: 8  }, () => ({ homeLabel: 'TBD', awayLabel: 'TBD', homeIsCode: false, awayIsCode: false, winner: null })),
-  Array.from({ length: 4  }, () => ({ homeLabel: 'TBD', awayLabel: 'TBD', homeIsCode: false, awayIsCode: false, winner: null })),
-  Array.from({ length: 2  }, () => ({ homeLabel: 'TBD', awayLabel: 'TBD', homeIsCode: false, awayIsCode: false, winner: null })),
-  Array.from({ length: 1  }, () => ({ homeLabel: 'TBD', awayLabel: 'TBD', homeIsCode: false, awayIsCode: false, winner: null })),
+  Array.from({ length: 16 }, () => ({ homeLabel: 'TBD', homeSub: null, awayLabel: 'TBD', awaySub: null, homeIsCode: false, awayIsCode: false, winner: null })),
+  Array.from({ length: 8  }, () => ({ homeLabel: 'TBD', homeSub: null, awayLabel: 'TBD', awaySub: null, homeIsCode: false, awayIsCode: false, winner: null })),
+  Array.from({ length: 4  }, () => ({ homeLabel: 'TBD', homeSub: null, awayLabel: 'TBD', awaySub: null, homeIsCode: false, awayIsCode: false, winner: null })),
+  Array.from({ length: 2  }, () => ({ homeLabel: 'TBD', homeSub: null, awayLabel: 'TBD', awaySub: null, homeIsCode: false, awayIsCode: false, winner: null })),
+  Array.from({ length: 1  }, () => ({ homeLabel: 'TBD', homeSub: null, awayLabel: 'TBD', awaySub: null, homeIsCode: false, awayIsCode: false, winner: null })),
 ];
 
 function computeKnockoutBracket(
@@ -185,7 +187,7 @@ function computeKnockoutBracket(
     return { rounds: EMPTY_ROUNDS, r32Confirmed: false };
   }
 
-  // matchById — needed for winnerLabel
+  // matchById — used to look up match numbers for "Winner of / Match N" labels
   const matchById = new Map(allMatches.map(m => [m.id, m]));
 
   // Build reverse adjacency: feedsInto[destId] = { home: srcId, away: srcId }
@@ -300,7 +302,7 @@ function computeKnockoutBracket(
 
   const rounds: BracketMatchup[][] = levels.map((level, r) =>
     level.map(mid => {
-      if (!mid) return { homeLabel: 'TBD', awayLabel: 'TBD', homeIsCode: false, awayIsCode: false, winner: null };
+      if (!mid) return { homeLabel: 'TBD', homeSub: null, awayLabel: 'TBD', awaySub: null, homeIsCode: false, awayIsCode: false, winner: null };
 
       const slot   = slots.get(mid);
       const winner = slot?.winner ?? null;
@@ -309,14 +311,23 @@ function computeKnockoutBracket(
         code: string | null | undefined,
         roundIndex: number,
         slotSide: 'home' | 'away',
-      ): { label: string; isCode: boolean } {
-        if (code != null) return { label: code, isCode: true };
+      ): { label: string; sub: string | null; isCode: boolean } {
+        if (code != null) return { label: code, sub: null, isCode: true };
         if (roundIndex === 0) {
           const seeding = r32Seeding![mid!];
-          return { label: seeding ? seedLabel(seeding[slotSide]) : 'TBD', isCode: false };
+          if (!seeding) return { label: 'TBD', sub: null, isCode: false };
+          const src = seeding[slotSide];
+          if (src.kind === 'thirdPlace') {
+            return { label: '3rd-place qualifier', sub: null, isCode: false };
+          }
+          return { label: seedLabel(src), sub: null, isCode: false };
         }
         const feederMatchId = feedsInto.get(mid!)?.[slotSide];
-        return { label: feederMatchId ? winnerLabel(feederMatchId, matchById) : 'TBD', isCode: false };
+        if (!feederMatchId) return { label: 'TBD', sub: null, isCode: false };
+        const sub = winnerSub(feederMatchId, matchById);
+        return sub != null
+          ? { label: 'Winner of', sub, isCode: false }
+          : { label: 'TBD', sub: null, isCode: false };
       }
 
       const home = resolveSlotLabel(slot?.home, r, 'home');
@@ -324,7 +335,9 @@ function computeKnockoutBracket(
 
       return {
         homeLabel: home.label,
+        homeSub:   home.sub,
         awayLabel: away.label,
+        awaySub:   away.sub,
         homeIsCode: home.isCode,
         awayIsCode: away.isCode,
         winner,
@@ -621,15 +634,15 @@ function StandingsView({ allMatches }: { allMatches: WC26Match[] }) {
         <View style={sv.qualRow}>
           <View style={sv.legendItem}>
             <View style={[sv.legendDot, { backgroundColor: colors.accent }]} />
-            <Text style={sv.legendText}>Top 2 qualify</Text>
+            <Text style={sv.legendText}>currently top 2</Text>
           </View>
           <View style={sv.legendItem}>
             <View style={[sv.legendDot, { backgroundColor: colors.amber }]} />
-            <Text style={sv.legendText}>Best 3rd</Text>
+            <Text style={sv.legendText}>currently best 3rd</Text>
           </View>
           <View style={sv.legendItem}>
             <View style={[sv.legendDot, { backgroundColor: colors.textMuted }]} />
-            <Text style={sv.legendText}>Outside top 3</Text>
+            <Text style={sv.legendText}>outside qualifying spots</Text>
           </View>
         </View>
         <Text style={sv.statLine}>P Played · W Wins · D Draws · L Losses · GD Goal diff · Pts Points</Text>
@@ -689,8 +702,8 @@ const sv = StyleSheet.create({
 
 // ── Bracket geometry constants ────────────────────────────────────────────────
 
-const UNIT      = 40;  // height of one R32 slot (px)
-const MATCHUP_H = 34;  // rendered height of each matchup pill
+const UNIT      = 56;  // height of one R32 slot (px) — sized for two-line placeholder rows
+const MATCHUP_H = 50;  // rendered height of each matchup pill
 const PILL_W    = 112; // matchup pill width
 const LEFT_PAD  = 8;   // space left of pill inside column
 const RIGHT_PAD = 8;   // space right of pill (first half of connector)
@@ -698,7 +711,7 @@ const COL_GAP   = 16;  // gap between columns (second half of connector)
 const COL_W     = LEFT_PAD + PILL_W + RIGHT_PAD; // 128
 const STEP      = COL_W + COL_GAP;               // 144
 const HEADER_H  = 36;
-const TOTAL_H   = 16 * UNIT + HEADER_H;          // 676
+const TOTAL_H   = 16 * UNIT + HEADER_H;          // 932
 const TOTAL_W   = 4 * STEP + COL_W + 20;         // 724 (final col + right padding)
 const LINE_CLR  = colors.cardBorder;
 
@@ -752,7 +765,9 @@ function BracketCanvas({ bracketRounds }: { bracketRounds: BracketMatchup[][] })
       const top = cy - MATCHUP_H / 2;
       const matchup    = bracketRounds[r]?.[i];
       const homeLabel  = matchup?.homeLabel ?? 'TBD';
+      const homeSub    = matchup?.homeSub   ?? null;
       const awayLabel  = matchup?.awayLabel ?? 'TBD';
+      const awaySub    = matchup?.awaySub   ?? null;
       const homeIsCode = matchup?.homeIsCode ?? false;
       const awayIsCode = matchup?.awayIsCode ?? false;
 
@@ -774,11 +789,29 @@ function BracketCanvas({ bracketRounds }: { bracketRounds: BracketMatchup[][] })
           }}
         >
           <View style={bs.teamRow}>
-            <Text style={homeIsCode ? bs.teamCode : bs.tbd} numberOfLines={1}>{homeLabel}</Text>
+            {homeIsCode ? (
+              <Text style={bs.teamCode}>{homeLabel}</Text>
+            ) : homeSub != null ? (
+              <>
+                <Text style={bs.slotLine1}>{homeLabel}</Text>
+                <Text style={bs.slotLine2}>{homeSub}</Text>
+              </>
+            ) : (
+              <Text style={bs.slotLabel} numberOfLines={2}>{homeLabel}</Text>
+            )}
           </View>
           <View style={bs.divider} />
           <View style={bs.teamRow}>
-            <Text style={awayIsCode ? bs.teamCode : bs.tbd} numberOfLines={1}>{awayLabel}</Text>
+            {awayIsCode ? (
+              <Text style={bs.teamCode}>{awayLabel}</Text>
+            ) : awaySub != null ? (
+              <>
+                <Text style={bs.slotLine1}>{awayLabel}</Text>
+                <Text style={bs.slotLine2}>{awaySub}</Text>
+              </>
+            ) : (
+              <Text style={bs.slotLabel} numberOfLines={2}>{awayLabel}</Text>
+            )}
           </View>
         </View>,
       );
@@ -865,11 +898,25 @@ const bs = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 8,
   },
-  tbd: {
-    fontSize: 10,
-    fontWeight: '500',
+  slotLabel: {
+    fontSize: 9,
+    fontFamily: fonts.barlowSemi,
     color: colors.textMuted,
-    letterSpacing: 1.2,
+    letterSpacing: 0,
+  },
+  slotLine1: {
+    fontSize: 8,
+    fontFamily: fonts.barlowReg,
+    color: colors.textMuted,
+    lineHeight: 11,
+    letterSpacing: 0,
+  },
+  slotLine2: {
+    fontSize: 10,
+    fontFamily: fonts.barlowReg,
+    color: colors.textSecondary,
+    lineHeight: 13,
+    letterSpacing: 0,
   },
   divider: {
     height: 1,
@@ -877,7 +924,7 @@ const bs = StyleSheet.create({
   },
   teamCode: {
     fontSize: 11,
-    fontWeight: '600',
+    fontFamily: fonts.barlowBold,
     color: colors.textPrimary,
     letterSpacing: 0.5,
   },
@@ -887,13 +934,30 @@ const bs = StyleSheet.create({
 
 export function TournamentScreen() {
   const [segment, setSegment] = useState<Segment>('standings');
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const chevronAnim = useRef(new Animated.Value(0)).current;
   const { matches } = useMatchData();
   const { config } = useTournamentConfig();
 
-  const { rounds: bracketRounds, r32Confirmed } = useMemo(
+  const { rounds: bracketRounds } = useMemo(
     () => computeKnockoutBracket(matches, config),
     [matches, config],
   );
+
+  function toggleRules() {
+    const next = !rulesOpen;
+    setRulesOpen(next);
+    Animated.timing(chevronAnim, {
+      toValue: next ? 1 : 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  }
+
+  const chevronRotation = chevronAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
 
   return (
     <View style={styles.root}>
@@ -927,19 +991,46 @@ export function TournamentScreen() {
 
       {/* ── Bracket ───────────────────────────────────────────────────────── */}
       {segment === 'bracket' && (
-        // Vertical scroll: lets user scroll up/down through R32 matchups
         <ScrollView
           style={styles.outerScroll}
           showsVerticalScrollIndicator={false}
           bounces
         >
-          {!r32Confirmed && (
-            <Text style={styles.bracketNote}>
-              Round of 32 matchups will be confirmed after the group stage.
-            </Text>
-          )}
+          {/* ── How it works card ─────────────────────────────────────────── */}
+          <View style={styles.explainerWrapper}>
+            <View style={styles.explainerCard}>
+              <Pressable
+                onPress={toggleRules}
+                style={styles.explainerHeader}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: rulesOpen }}
+              >
+                <Text style={styles.explainerTitle}>how the knockout round works</Text>
+                <Animated.View style={{ transform: [{ rotate: chevronRotation }] }}>
+                  <Svg width={16} height={16} viewBox="0 0 16 16">
+                    <Path
+                      d="M4 6 L8 10 L12 6"
+                      stroke={colors.textMuted}
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      fill="none"
+                    />
+                  </Svg>
+                </Animated.View>
+              </Pressable>
+              {rulesOpen && (
+                <View style={styles.explainerBody}>
+                  <Text style={styles.explainerLine}>* round of 32 teams will be confirmed after the group stage.</Text>
+                  <Text style={styles.explainerLine}>* 32 teams advance from the group stage.</Text>
+                  <Text style={styles.explainerLine}>* the top 2 teams in each of the 12 groups qualify automatically, plus the 8 best third-place teams.</Text>
+                  <Text style={styles.explainerLine}>* then it is single elimination: win and advance. the semifinal losers play for third place.</Text>
+                </View>
+              )}
+            </View>
+          </View>
 
-          {/* Horizontal scroll: lets user pan left/right through rounds */}
+          {/* ── Horizontal bracket scroll ──────────────────────────────────── */}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -1002,14 +1093,45 @@ const styles = StyleSheet.create({
   outerScroll: {
     flex: 1,
   },
-  bracketNote: {
-    fontSize: 12,
-    fontFamily: fonts.interRegular,
-    color: colors.textMuted,
-    letterSpacing: 0.4,
+  explainerWrapper: {
     paddingHorizontal: 16,
     paddingTop: 4,
     paddingBottom: 10,
+  },
+  explainerCard: {
+    backgroundColor: colors.card,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    overflow: 'hidden',
+  },
+  explainerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+  },
+  explainerTitle: {
+    fontSize: 13,
+    fontFamily: fonts.barlowSemi,
+    color: colors.textSecondary,
+    letterSpacing: 0.3,
+  },
+  explainerBody: {
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 12,
+    gap: 6,
+  },
+  explainerLine: {
+    fontSize: 12,
+    fontFamily: fonts.barlowReg,
+    color: colors.textMuted,
+    letterSpacing: 0.2,
+    lineHeight: 17,
   },
   bracketPadding: {
     paddingHorizontal: 16,
